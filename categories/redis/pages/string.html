@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Redis7 String (SDS) 可视化</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="navBar"></div>
+
+    <h1 class="page-title">Redis 7 String → SDS 7.0 可视化</h1>
+    <p class="page-desc">操作 → 编码自动切换 | int / embstr / raw 三种编码 | 只升级不降级</p>
+
+    <!-- 编码路径图 (单向箭头) -->
+    <div id="encodingPath"></div>
+
+    <!-- 不可逆规则提示 -->
+    <div id="irreversibleBar"></div>
+
+    <!-- 编码状态栏 -->
+    <div class="encoding-bar">
+        <div class="enc-item">
+            <span class="enc-label">类型:</span>
+            <span class="enc-value" style="background:#8b5cf6;">String</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">当前编码:</span>
+            <span class="enc-value" id="encDisplay">int</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">最高编码:</span>
+            <span class="enc-value" id="maxEncDisplay" style="background:#999;">int</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">字节长度:</span>
+            <span id="byteLen">0</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">embstr 阈值:</span>
+            <span>≤ 44 字节</span>
+        </div>
+    </div>
+
+    <!-- 编码切换提示 -->
+    <div class="encoding-change-alert" id="encAlert">
+        <div class="alert-title"></div>
+        <div class="alert-detail"></div>
+    </div>
+
+    <!-- 降级阻止提示 -->
+    <div class="downgrade-blocked-alert" id="blockedAlert">
+        <div class="blocked-title"></div>
+        <div class="blocked-detail"></div>
+    </div>
+
+    <!-- 主容器: 左侧控制栏 | 中间可视化 | 右侧源码按钮 -->
+    <div class="main-container">
+        <!-- 左侧: 控制栏 (竖直排列) -->
+        <div class="ctrl-bar">
+            <div class="ctrl-label">操作命令</div>
+            <input type="text" id="inputValue" placeholder="值..." value="100">
+            <button id="btnSet">SET 设置值</button>
+            <input type="text" id="inputAppend" placeholder="追加内容..." value="hello">
+            <button id="btnAppend">APPEND 追加</button>
+            <div class="ctrl-divider"></div>
+            <button id="btnIncr">INCR 自增</button>
+            <div class="ctrl-divider"></div>
+            <button class="reset" id="btnReset">重置结构</button>
+        </div>
+
+        <!-- 中间: 可视化区域 -->
+        <div class="visual-box">
+            <h3>SDS 结构可视化</h3>
+
+            <div class="sds-visual" id="sdsVisual">
+                <div class="sds-title">SDS (Simple Dynamic String)</div>
+                <div class="sds-fields" id="sdsFields">
+                    • len = 0<br>
+                    • alloc = 0<br>
+                    • flags = sds_type<br>
+                    • encoding = int
+                </div>
+                <div class="sds-buf-host" id="sdsBuf">
+                    <div class="sds-buf-inner sds-buf-empty">char buf[] = (空)</div>
+                </div>
+            </div>
+
+            <div class="tip" id="encodingTip">
+                <strong>编码规则（只升级不降级）：</strong><br>
+                ✔ 整数值 → <code>int</code> 编码 (ptr 直接存值)<br>
+                ✔ 字符串 ≤ 44 字节 → <code>embstr</code> (一次分配，减少碎片)<br>
+                ✔ 字符串 > 44 字节 → <code>raw</code> (分开分配，可修改)<br>
+                ✔ embstr 修改后转为 raw，<strong>不可逆</strong><br>
+                ✔ raw 即使改回短字符串，<strong>也不会降回 embstr</strong><br>
+                ✔ INCR 仅在 int 编码可用，升级后不可用
+            </div>
+
+            <div class="log" id="operLog">操作日志：等待操作...</div>
+        </div>
+
+        <!-- 右侧: 源码按钮 -->
+        <div id="codeBtnContainer"></div>
+    </div>
+
+    <!-- 源码悬浮面板 -->
+    <div id="codePanelContainer"></div>
+
+    <script src="/static/api.js"></script>
+    <script>
+        document.getElementById('navBar').innerHTML = createNavBar();
+        document.getElementById('encodingPath').innerHTML = createEncodingPath([
+            { label: 'int', cls: 'enc-int' },
+            { label: 'embstr', cls: 'enc-embstr' },
+            { label: 'raw', cls: 'enc-raw' }
+        ]);
+        document.getElementById('irreversibleBar').innerHTML = createIrreversibleBar(
+            'int → embstr → raw',
+            'String 编码只升级不降级: 即使值变回短字符串，raw 也不会降回 embstr'
+        );
+
+        // 源码内容
+        const codeContent = `
+            <h3>1. redisObject 结构体</h3>
+<pre>
+typedef struct redisObject {
+    <span class="highlight">unsigned type:4</span>;        /* 对象类型 OBJ_STRING=0 */
+    <span class="highlight">unsigned encoding:4</span>;    /* 编码方式 */
+    <span class="highlight">unsigned lru:24</span>;        /* LRU 时间 */
+    <span class="highlight">int refcount</span>;           /* 引用计数 */
+    <span class="highlight">void *ptr</span>;              /* 指向底层数据 */
+} robj;
+</pre>
+            <h3>2. SDS 结构体 (sdshdr8)</h3>
+<pre>
+struct __attribute__((__packed__)) sdshdr8 {
+    <span class="highlight">uint8_t len</span>;        /* 已使用长度 */
+    <span class="highlight">uint8_t alloc</span>;      /* 总分配长度 */
+    <span class="highlight">unsigned char flags</span>; /* 3 lsb of type */
+    <span class="highlight">char buf[]</span>;         /* 数据缓冲区 */
+};
+</pre>
+            <h3>3. 三种编码说明（只升级不降级）</h3>
+<pre>
+<span class="keyword">int</span>    : ptr 直接存整数值，不分配 SDS
+<span class="keyword">embstr</span> : SDS+robj 一次分配，连续内存
+         长度 ≤ <span class="highlight">44</span> 字节
+<span class="keyword">raw</span>    : SDS+robj 分开分配
+         长度 > <span class="highlight">44</span> 字节
+
+<span class="comment">// 核心规则: 编码只升级不降级!</span>
+<span class="comment">// int → embstr → raw 单向不可逆</span>
+<span class="comment">// 即使值变回短字符串，raw 也不会降回 embstr</span>
+</pre>`;
+
+        // 渲染源码按钮和面板
+        const btnContainer = document.getElementById('codeBtnContainer');
+        btnContainer.innerHTML = createCodePanel('stringCode');
+        // 把面板和遮罩移动到 body 末尾 (避免被 flex 布局影响)
+        setTimeout(() => {
+            const panel = document.getElementById('stringCode-panel');
+            const mask = document.getElementById('stringCode-mask');
+            if (panel && mask) {
+                document.body.appendChild(mask);
+                document.body.appendChild(panel);
+                document.getElementById('stringCode-body').innerHTML = codeContent;
+            }
+        }, 0);
+
+        const logDom = document.getElementById('operLog');
+        const encDisplay = document.getElementById('encDisplay');
+        const maxEncDisplay = document.getElementById('maxEncDisplay');
+        const byteLenDisplay = document.getElementById('byteLen');
+        const sdsFields = document.getElementById('sdsFields');
+        const sdsBuf = document.getElementById('sdsBuf');
+        const encAlert = document.getElementById('encAlert');
+        const blockedAlert = document.getElementById('blockedAlert');
+
+        function getEncClass(enc) {
+            const map = { 'int': 'enc-int', 'embstr': 'enc-embstr', 'raw': 'enc-raw' };
+            return map[enc] || 'enc-int';
+        }
+
+        function updateView(data) {
+            const struct = data.structure || data;
+            const enc = struct.encoding;
+            const maxEnc = struct.max_encoding || enc;
+            const value = struct.value || '';
+            const byteLen = struct.byte_len || 0;
+
+            encDisplay.textContent = enc;
+            encDisplay.className = 'enc-value ' + getEncClass(enc);
+            maxEncDisplay.textContent = maxEnc;
+            maxEncDisplay.className = 'enc-value ' + getEncClass(maxEnc);
+            byteLenDisplay.textContent = byteLen;
+
+            sdsFields.innerHTML = `
+                • len = ${byteLen}<br>
+                • alloc = ${struct.alloc || byteLen}<br>
+                • flags = sds_type<br>
+                • encoding = <span style="color:${enc === 'int' ? '#3b82f6' : enc === 'embstr' ? '#10b981' : '#ef4444'};font-weight:bold;">${enc}</span><br>
+                • max_encoding = <span style="color:#dc2626;font-weight:bold;">${maxEnc}</span>（不可逆）
+            `;
+            // int 编码时没有 buf[], 只有 ptr 直接存值
+            if (enc === 'int') {
+                sdsBuf.innerHTML = `<div class="sds-buf-inner sds-buf-int">int64_t value = ${escapeHtml(value)} &nbsp;(<code>ptr</code> 直接存储, 不分配 SDS)</div>`;
+            } else {
+                sdsBuf.innerHTML = renderSdsBuf(value, struct.alloc || byteLen);
+            }
+
+            const change = data.result?.encoding_change || data.encoding_change;
+            if (change) {
+                showEncodingChange(encAlert, change);
+                showDowngradeBlocked(blockedAlert, change);
+                logEncodingChange(logDom, change, 'String');
+            }
+        }
+
+        async function loadStructure() {
+            const data = await StringAPI.getStructure();
+            updateView(data);
+            writeLog(logDom, '结构加载完成');
+        }
+
+        document.getElementById('btnSet').addEventListener('click', async () => {
+            const value = document.getElementById('inputValue').value;
+            const data = await StringAPI.set(value);
+            updateView(data);
+            const change = data.result?.encoding_change;
+            if (!change) {
+                writeLog(logDom, `SET "${value}" → 编码: ${data.structure?.encoding} (不变)`);
+            }
+        });
+
+        document.getElementById('btnAppend').addEventListener('click', async () => {
+            const value = document.getElementById('inputAppend').value;
+            const data = await StringAPI.append(value);
+            if (data.result?.error) {
+                writeLog(logDom, `错误: ${data.result.error}`, 'blocked');
+                return;
+            }
+            updateView(data);
+            const change = data.result?.encoding_change;
+            if (!change) {
+                writeLog(logDom, `APPEND "${value}" → 编码: ${data.structure?.encoding}`);
+            }
+        });
+
+        document.getElementById('btnIncr').addEventListener('click', async () => {
+            const data = await StringAPI.incr();
+            if (data.result?.error) {
+                writeLog(logDom, `错误: ${data.result.error}`, 'blocked');
+                return;
+            }
+            updateView(data);
+            writeLog(logDom, `INCR → 值: ${data.structure?.value}`);
+        });
+
+        document.getElementById('btnReset').addEventListener('click', async () => {
+            const data = await StringAPI.reset();
+            updateView(data);
+            writeLog(logDom, '结构已重置');
+        });
+
+        loadStructure();
+    </script>
+</body>
+</html>

@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Redis7 ZSet 可视化</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="navBar"></div>
+
+    <h1 class="page-title">Redis 7 ZSet → Listpack/SkipList 可视化</h1>
+    <p class="page-desc">有序集合 | 小规模 listpack | 大规模跳表+哈希表 | 只升级不降级</p>
+
+    <div id="encodingPath"></div>
+    <div id="irreversibleBar"></div>
+
+    <div class="encoding-bar">
+        <div class="enc-item">
+            <span class="enc-label">类型:</span>
+            <span class="enc-value" style="background:#dc2626;">ZSet</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">当前编码:</span>
+            <span class="enc-value" id="encDisplay">listpack</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">元素数:</span>
+            <span id="entryCount">0</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">转换阈值:</span>
+            <span>128 元素</span>
+        </div>
+    </div>
+
+    <div class="encoding-change-alert" id="encAlert">
+        <div class="alert-title"></div>
+        <div class="alert-detail"></div>
+    </div>
+
+    <div class="downgrade-blocked-alert" id="blockedAlert">
+        <div class="blocked-title"></div>
+        <div class="blocked-detail"></div>
+    </div>
+
+    <div class="main-container">
+        <div class="ctrl-bar">
+            <div class="ctrl-label">操作命令</div>
+            <input type="text" id="inputMember" placeholder="成员 member..." value="player1">
+            <input type="number" id="inputScore" placeholder="分值 score..." value="100" step="0.1">
+            <button id="btnZadd">ZADD 添加/更新</button>
+            <button id="btnZrem">ZREM 删除</button>
+            <div class="ctrl-divider"></div>
+            <div class="ctrl-label" style="font-size:12px;color:#7c3aed;">⚡ 批量填充 (升级演示)</div>
+            <div class="bulk-fill-row">
+                <input type="number" id="inputBulkCount" value="130" min="1" max="10000" placeholder="N">
+                <button class="bulk" id="btnBulkFill" style="flex:0 0 auto;padding:6px 10px;">填充</button>
+            </div>
+            <div class="ctrl-divider"></div>
+            <button class="reset" id="btnReset">重置结构</button>
+        </div>
+
+        <div class="visual-box">
+            <h3>ZSet 结构可视化</h3>
+            <div id="zsetVisual"></div>
+
+            <div class="tip">
+                ✔ ZSet 小规模使用 listpack，内存紧凑<br>
+                ✔ 元素超过阈值自动升级为 skiplist + hashtable（<strong>不可逆</strong>）<br>
+                ✔ skiplist 即使删除到很少元素，<strong>也不会降回 listpack</strong><br>
+                ✔ 跳表支持 O(logN) 范围查询<br>
+                ✔ HashTable 提供 O(1) 成员查询<br>
+                ✔ 跳表最大 32 层，升层概率 1/4
+            </div>
+
+            <div class="log" id="operLog">操作日志：等待操作...</div>
+        </div>
+
+        <div id="codeBtnContainer"></div>
+    </div>
+
+    <script src="/static/api.js"></script>
+    <script>
+        document.getElementById('navBar').innerHTML = createNavBar();
+        document.getElementById('encodingPath').innerHTML = createEncodingPath([
+            { label: 'listpack', cls: 'enc-listpack' },
+            { label: 'skiplist+hashtable', cls: 'enc-skiplist' }
+        ]);
+        document.getElementById('irreversibleBar').innerHTML = createIrreversibleBar(
+            'listpack → skiplist+hashtable',
+            'ZSet 编码只升级不降级: skiplist 不会降回 listpack，即使元素很少'
+        );
+
+        const codeContent = `
+            <h3>1. ZSet 编码切换规则（只升级不降级）</h3>
+<pre>
+<span class="comment">// Redis 7 ZSet 编码选择:</span>
+元素数 ≤ <span class="highlight">128</span> 且值长度 ≤ 64 字节
+    → <span class="keyword">listpack</span> 编码
+
+元素数 > 128 或值长度 > 64 字节
+    → <span class="keyword">skiplist + hashtable</span> 编码
+
+<span class="comment">// 升级后不降级!</span>
+<span class="comment">// 即使删到只剩1个元素，skiplist 也不会变回 listpack</span>
+</pre>
+            <h3>2. SkipList 结构体</h3>
+<pre>
+typedef struct zskiplist {
+    <span class="highlight">struct zskiplistNode *header, *tail</span>;
+    <span class="highlight">unsigned long length</span>;    /* 节点数量 */
+    <span class="highlight">int level</span>;               /* 最大层数 */
+} zskiplist;
+
+typedef struct zskiplistNode {
+    <span class="highlight">sds ele</span>;                 /* 成员对象 */
+    <span class="highlight">double score</span>;            /* 分值 */
+    <span class="highlight">struct zskiplistNode *backward</span>;
+    struct zskiplistLevel {
+        <span class="highlight">struct zskiplistNode *forward</span>;
+        <span class="highlight">unsigned long span</span>;   /* 跨度 */
+    } level[];
+} zskiplistNode;
+</pre>
+            <h3>3. 跳表特性</h3>
+<pre>
+<span class="comment">// 最大 32 层</span>
+<span class="comment">// 每层以概率 1/4 升层</span>
+<span class="comment">// O(logN) 查找/插入/删除</span>
+<span class="comment">// 与 HashTable 配合实现 O(1) 成员查询</span>
+</pre>`;
+
+        document.getElementById('codeBtnContainer').innerHTML = createCodePanel('zsetCode');
+        setTimeout(() => {
+            const panel = document.getElementById('zsetCode-panel');
+            const mask = document.getElementById('zsetCode-mask');
+            if (panel && mask) {
+                document.body.appendChild(mask);
+                document.body.appendChild(panel);
+                document.getElementById('zsetCode-body').innerHTML = codeContent;
+            }
+        }, 0);
+
+        const logDom = document.getElementById('operLog');
+        const encDisplay = document.getElementById('encDisplay');
+        const entryCountDisplay = document.getElementById('entryCount');
+        const encAlert = document.getElementById('encAlert');
+        const blockedAlert = document.getElementById('blockedAlert');
+
+        function getEncClass(enc) {
+            return enc === 'listpack' ? 'enc-listpack' : 'enc-skiplist';
+        }
+
+        // ---- 跳表分层渲染 ----
+        // 每个节点用统一列号 (按 level 0 顺序) 横向对齐,
+        // 不同层共享同一坐标系,层与层之间用横向箭头连接 forward 节点。
+        function renderSkipList(struct) {
+            const nodes = struct.nodes || [];
+            const levels = struct.levels || [];
+            const dist = struct.level_distribution || [];
+            const lastOp = struct.last_op;
+
+            if (nodes.length === 0) {
+                return `<div class="sl-empty">跳表为空 - 通过 ZADD 添加节点</div>`;
+            }
+
+            // 给每个 member 分配一个列号 (按 level 0 顺序),用于跨层对齐
+            const colOf = new Map();
+            nodes.forEach((n, idx) => colOf.set(n.member, idx));
+            const totalCols = nodes.length;
+
+            // 计算每层节点的列号,便于在层内绘制 forward span
+            const levelRowsHtml = levels.map(lv => {
+                // 在该层出现的节点 (含 __HEADER__ 隐含在两端, 这里只画真实节点)
+                const cells = new Array(totalCols).fill(null);
+                lv.nodes.forEach(n => {
+                    cells[colOf.get(n.member)] = n;
+                });
+
+                const cellsHtml = cells.map((n, idx) => {
+                    if (!n) {
+                        return `<div class="sl-cell sl-empty-cell" data-col="${idx}"></div>`;
+                    }
+                    const isOpTarget = lastOp && lastOp.target === n.member;
+                    return `
+                        <div class="sl-cell sl-filled" data-col="${idx}" data-member="${escapeAttr(n.member)}" data-score="${n.score}">
+                            <div class="sl-node ${isOpTarget ? 'sl-op-target' : ''}" title="score=${n.score}">
+                                <div class="sl-member">${escapeHtml(n.member)}</div>
+                                <div class="sl-score">${n.score}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                // 显式设置 grid 列数,确保每列宽度一致
+                const gridStyle = `grid-template-columns: repeat(${totalCols}, 90px);`;
+                return `
+                    <div class="sl-layer" data-level="${lv.level}">
+                        <div class="sl-layer-label">L${lv.level}${lv.level === struct.level ? ' <span class="sl-top">(顶层)</span>' : ''}</div>
+                        <div class="sl-layer-cells" style="${gridStyle}">${cellsHtml}</div>
+                    </div>
+                `;
+            }).join('');
+
+            // 底部完整有序链表 (level 0),即层 0 一定包含所有节点
+            const tailNode = struct.tail ? `<span class="sl-tail">tail → ${escapeHtml(struct.tail)}</span>` : '';
+
+            // 层级统计卡片
+            const distHtml = dist.length > 0 ? `
+                <div class="sl-dist-card">
+                    <div class="sl-dist-title">各层节点数 (升层概率 1/4 → 指数衰减)</div>
+                    ${dist.map(d => {
+                        const ratio = nodes.length > 0 ? (d.count / nodes.length * 100).toFixed(0) : 0;
+                        const barWidth = Math.max(2, ratio);
+                        return `
+                            <div class="sl-dist-row">
+                                <span class="sl-dist-label">L${d.level}</span>
+                                <div class="sl-dist-bar-wrap">
+                                    <div class="sl-dist-bar" style="width:${barWidth}%;"></div>
+                                    <span class="sl-dist-count">${d.count}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            ` : '';
+
+            // 操作路径说明
+            const pathHint = lastOp ? `
+                <div class="sl-path-hint">
+                    最近操作: <strong>${lastOp.kind === 'insert' ? 'ZADD' : 'ZREM'}</strong>
+                    目标: <code>${escapeHtml(lastOp.target)}</code>
+                    &nbsp;|&nbsp; 访问路径(每层):
+                    ${lastOp.path.map((row, i) => `<span class="sl-path-row">L${i}: ${row.map(m => escapeHtml(m)).join(' → ')}</span>`).join('')}
+                </div>
+            ` : '';
+
+            return `
+                <div class="sl-container">
+                    <div class="sl-header-row">
+                        <span class="sl-header-node">H (header)</span>
+                        <span class="sl-tail">${tailNode}</span>
+                    </div>
+                    <div class="sl-layers" id="sl-layers">
+                        ${levelRowsHtml}
+                    </div>
+                    ${pathHint}
+                    ${distHtml}
+                </div>
+            `;
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+        function escapeAttr(s) { return escapeHtml(s); }
+
+        // ---- 配套 Hashtable (统一渲染) ----
+        function renderZSetHashTable(ht) {
+            if (!ht) return '';
+            return renderHashTable(ht, {
+                title: '配套 HashTable (O(1) member → score 查询)',
+                color: '#059669',
+                showValue: true,
+            });
+        }
+
+        function renderZSet(struct, animate = false) {
+            const visual = document.getElementById('zsetVisual');
+            encDisplay.textContent = struct.current_encoding;
+            encDisplay.className = 'enc-value ' + getEncClass(struct.current_encoding);
+
+            if (struct.current_encoding === 'listpack') {
+                entryCountDisplay.textContent = struct.entry_count;
+                const entries = struct.entries || [];
+                visual.innerHTML = `
+                    <div class="struct-main" style="border-color:#8b5cf6;background:#f5f3ff;">
+                        <div class="struct-title" style="color:#8b5cf6;">Listpack 编码</div>
+                        <div class="struct-fields">
+                            • entry_count = ${struct.entry_count}<br>
+                            • total_bytes = ${struct.total_bytes}<br>
+                            • max_entries = ${struct.max_entries}
+                        </div>
+                        <div class="listpack-box" style="margin-top:12px;">
+                            <div class="lp-title">有序键值对 (按 score 排序)</div>
+                            <div class="lp-items">
+                                ${entries.map(e => `<span class="item key">${e.field}</span><span class="item score">${e.value}</span>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                entryCountDisplay.textContent = struct.length;
+                visual.innerHTML = `
+                    <div class="struct-main" style="border-color:#dc2626;background:#fef2f2;">
+                        <div class="struct-title" style="color:#dc2626;">SkipList 编码（不可逆）</div>
+                        <div class="struct-fields">
+                            • level = ${struct.level}&nbsp;&nbsp;• length = ${struct.length}<br>
+                            • max_level = ${struct.max_level}&nbsp;&nbsp;• probability = ${struct.probability}
+                        </div>
+                    </div>
+                    <div class="skiplist-visual" id="skiplistVisual">
+                        ${renderSkipList(struct)}
+                    </div>
+                    ${renderZSetHashTable(struct.hashtable)}
+                `;
+                // 渲染后绘制 forward 箭头 + span 标注
+                drawSkipListArrows(struct);
+                if (animate && struct.last_op) playOpAnimation(struct.last_op);
+            }
+        }
+
+        // 分步播放最近一次操作的访问路径
+        async function playOpAnimation(lastOp) {
+            if (!lastOp || !lastOp.path) return;
+            const container = document.getElementById('sl-layers');
+            if (!container) return;
+            const visitedMembers = new Set();
+            for (let lvl = lastOp.path.length - 1; lvl >= 0; lvl--) {
+                for (const m of lastOp.path[lvl]) {
+                    if (visitedMembers.has(m)) continue;
+                    visitedMembers.add(m);
+                    const cell = container.querySelector(
+                        `.sl-layer[data-level="${lvl}"] .sl-cell[data-member="${cssEscape(m)}"]`
+                    );
+                    if (cell) {
+                        cell.classList.add('sl-flash');
+                        setTimeout(() => cell.classList.remove('sl-flash'), 1200);
+                    }
+                    await sleep(120);
+                }
+            }
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+        function cssEscape(s) {
+            if (window.CSS && CSS.escape) return CSS.escape(s);
+            return String(s).replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c);
+        }
+
+        // 根据 levels 数据, 用 SVG 在 .sl-layers 容器上覆盖箭头与 span 数字
+        function drawSkipListArrows(struct) {
+            const container = document.getElementById('sl-layers');
+            if (!container) return;
+            // 清理旧 svg
+            const old = container.querySelector('svg.sl-svg');
+            if (old) old.remove();
+
+            const levels = struct.levels || [];
+            const nodes = struct.nodes || [];
+            if (nodes.length === 0) return;
+            const colOf = new Map();
+            nodes.forEach((n, idx) => colOf.set(n.member, idx));
+
+            // 使用 grid 布局:每个 sl-layer 是一行; 节点用同列对齐
+            // 计算每个 sl-cell 的实际位置
+            const layerEls = container.querySelectorAll('.sl-layer');
+            const rectOf = (el) => el.getBoundingClientRect();
+            const containerRect = rectOf(container);
+
+            // 收集每层每个节点的中心点 (相对于容器)
+            const points = []; // points[level] = [ {col, x, y, member} ]
+            layerEls.forEach(layerEl => {
+                const lvl = parseInt(layerEl.dataset.level);
+                const cells = layerEl.querySelectorAll('.sl-cell.sl-filled');
+                const row = [];
+                cells.forEach(cell => {
+                    const r = rectOf(cell);
+                    const member = cell.dataset.member;
+                    row.push({
+                        col: colOf.get(member),
+                        x: r.left - containerRect.left + r.width / 2,
+                        y: r.top - containerRect.top + r.height / 2,
+                        member,
+                    });
+                });
+                points[lvl] = row;
+            });
+
+            // 创建 SVG
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('class', 'sl-svg');
+            svg.style.position = 'absolute';
+            svg.style.left = '0';
+            svg.style.top = '0';
+            svg.style.width = containerRect.width + 'px';
+            svg.style.height = containerRect.height + 'px';
+            svg.style.pointerEvents = 'none';
+            svg.setAttribute('viewBox', `0 0 ${containerRect.width} ${containerRect.height}`);
+
+            const SVG_NS = 'http://www.w3.org/2000/svg';
+            // 标记 last_op 路径上的节点
+            const lastOp = struct.last_op;
+            const visited = new Set();
+            if (lastOp && lastOp.path) {
+                lastOp.path.forEach(row => row.forEach(m => visited.add(m)));
+            }
+
+            // 对每层,画 forward 箭头 + span 数字
+            levels.forEach(lv => {
+                const row = points[lv.level] || [];
+                for (let i = 0; i < row.length - 1; i++) {
+                    const a = row[i];
+                    const b = row[i + 1];
+                    if (b.x <= a.x) continue;
+                    const span = lv.nodes[i].span;
+
+                    const line = document.createElementNS(SVG_NS, 'line');
+                    line.setAttribute('x1', a.x);
+                    line.setAttribute('y1', a.y);
+                    line.setAttribute('x2', b.x);
+                    line.setAttribute('y2', b.y);
+                    line.setAttribute('stroke', '#dc2626');
+                    line.setAttribute('stroke-width', '2');
+                    line.setAttribute('marker-end', 'url(#sl-arrow)');
+                    if (lastOp && lastOp.path[lv.level] &&
+                        lastOp.path[lv.level].includes(a.member) &&
+                        lastOp.path[lv.level].includes(b.member)) {
+                        line.setAttribute('class', 'sl-edge sl-edge-active');
+                    }
+                    svg.appendChild(line);
+                }
+            });
+
+            // 定义箭头 marker
+            const defs = document.createElementNS(SVG_NS, 'defs');
+            const marker = document.createElementNS(SVG_NS, 'marker');
+            marker.setAttribute('id', 'sl-arrow');
+            marker.setAttribute('viewBox', '0 0 10 10');
+            marker.setAttribute('refX', '9');
+            marker.setAttribute('refY', '5');
+            marker.setAttribute('markerWidth', '6');
+            marker.setAttribute('markerHeight', '6');
+            marker.setAttribute('orient', 'auto-start-reverse');
+            const path = document.createElementNS(SVG_NS, 'path');
+            path.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+            path.setAttribute('fill', '#dc2626');
+            marker.appendChild(path);
+            defs.appendChild(marker);
+            svg.appendChild(defs);
+
+            // 让容器为 relative 以便 svg 绝对定位
+            container.style.position = container.style.position || 'relative';
+            container.appendChild(svg);
+        }
+
+        async function loadStructure() {
+            const data = await ZSetAPI.getStructure();
+            renderZSet(data);
+            writeLog(logDom, '结构加载完成');
+        }
+
+        document.getElementById('btnZadd').addEventListener('click', async () => {
+            const member = document.getElementById('inputMember').value;
+            const score = parseFloat(document.getElementById('inputScore').value);
+            const data = await ZSetAPI.zadd(member, score);
+            renderZSet(data.structure, true);
+            const change = data.encoding_change;
+            if (change) {
+                showEncodingChange(encAlert, change);
+                showDowngradeBlocked(blockedAlert, change);
+                logEncodingChange(logDom, change, 'ZADD');
+            } else {
+                writeLog(logDom, `ZADD ${member} ${score} → 编码: ${data.encoding}`);
+            }
+        });
+
+        document.getElementById('btnZrem').addEventListener('click', async () => {
+            const member = document.getElementById('inputMember').value;
+            const data = await ZSetAPI.zrem(member);
+            renderZSet(data.structure, true);
+            writeLog(logDom, `ZREM ${member}`);
+        });
+
+        document.getElementById('btnBulkFill').addEventListener('click', async () => {
+            const count = parseInt(document.getElementById('inputBulkCount').value) || 130;
+            const data = await ZSetAPI.bulkFill(count);
+            renderZSet(data.structure, false);
+            const change = data.encoding_change;
+            if (change) {
+                logEncodingChange(logDom, change, 'BULK_FILL');
+            } else {
+                writeLog(logDom, `BULK_FILL 填充 ${data.added} 个 member-score (目标: ${data.target})`);
+            }
+        });
+
+        document.getElementById('btnReset').addEventListener('click', async () => {
+            const data = await ZSetAPI.reset();
+            renderZSet(data.structure, false);
+            writeLog(logDom, '结构已重置');
+        });
+
+        // 窗口大小变化时重绘 SVG 箭头
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => {
+                if (encDisplay.textContent === 'skiplist') {
+                    ZSetAPI.getStructure().then(d => {
+                        const visual = document.getElementById('zsetVisual');
+                        if (visual.querySelector('#sl-layers')) {
+                            renderZSet(d, false);
+                        }
+                    });
+                }
+            }, 200);
+        });
+
+        loadStructure();
+    </script>
+</body>
+</html>

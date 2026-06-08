@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Redis7 Quicklist 结构体+交互动画演示</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft Yahei", Consolas, monospace;
+        }
+        body {
+            padding: 20px;
+            background: #f7f8fa;
+        }
+        .page-title {
+            text-align: center;
+            font-size: 24px;
+            color: #c0392b;
+            margin-bottom: 8px;
+        }
+        .page-desc {
+            text-align: center;
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .ctrl-bar {
+            max-width: 1400px;
+            margin: 0 auto 20px;
+            text-align: center;
+            padding: 12px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 6px #ddd;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 0 8px;
+            border: none;
+            border-radius: 4px;
+            background: #2563eb;
+            color: #fff;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+        button.reset {
+            background: #dc2626;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        /* 左侧源码区 */
+        .code-box {
+            flex: 1;
+            min-width: 500px;
+            background: #1f2937;
+            color: #e5e7eb;
+            padding: 20px;
+            border-radius: 10px;
+            overflow-x: auto;
+        }
+        .code-box h3 {
+            color: #38bdf8;
+            margin-bottom: 12px;
+            border-left: 4px solid #38bdf8;
+            padding-left: 8px;
+        }
+        pre {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #d1d5db;
+        }
+        .highlight {
+            color: #fbbf24;
+            font-weight: bold;
+        }
+        /* 右侧可视化区 */
+        .visual-box {
+            flex: 1.2;
+            min-width: 600px;
+            background: #fff;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px #ddd;
+        }
+        .visual-box h3 {
+            color: #dc2626;
+            margin-bottom: 20px;
+            border-left: 4px solid #dc2626;
+            padding-left: 8px;
+        }
+        .ql-main {
+            border: 2px solid #2563eb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            background: #eff6ff;
+        }
+        .ql-title {
+            font-weight: bold;
+            color: #2563eb;
+            margin-bottom: 10px;
+        }
+        .ql-fields {
+            font-size: 14px;
+            line-height: 1.7;
+            padding-left: 10px;
+        }
+        .node {
+            border: 2px solid #059669;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            background: #f0fdf4;
+            transition: all 0.3s ease;
+        }
+        .node.active {
+            box-shadow: 0 0 0 3px #f59e0b;
+        }
+        .node-title {
+            font-weight: bold;
+            color: #059669;
+            margin-bottom: 8px;
+        }
+        .node-fields {
+            font-size: 14px;
+            line-height: 1.7;
+            padding-left: 10px;
+        }
+        .listpack {
+            border: 1px dashed #d97706;
+            padding: 10px;
+            margin-top: 8px;
+            border-radius: 6px;
+            background: #fffbeb;
+        }
+        .lp-title {
+            font-size: 13px;
+            color: #d97706;
+            margin-bottom: 6px;
+        }
+        .lp-items {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .item {
+            background: #d97706;
+            color: #fff;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+            transition: transform 0.3s ease;
+        }
+        .item.add {
+            transform: scale(1.2);
+        }
+        .arrow {
+            text-align: center;
+            font-size: 20px;
+            color: #666;
+            margin: 5px 0;
+            transition: opacity 0.3s;
+        }
+        .tip {
+            background: #fff8e6;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #854d0e;
+        }
+        .log {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f1f5f9;
+            border-radius: 6px;
+            font-size: 13px;
+            height: 80px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1 class="page-title">Redis 7 Quicklist 结构体 + 交互动画演示</h1>
+    <p class="page-desc">左侧源码结构体 | 右侧可视化结构 | 模拟 LPUSH / RPUSH / 节点分裂</p>
+
+    <div class="ctrl-bar">
+        <button id="btnLpush">LPUSH 头部添加元素</button>
+        <button id="btnRpush">RPUSH 尾部添加元素</button>
+        <button id="btnSplit">模拟节点分裂</button>
+        <button class="reset" id="btnReset">重置结构</button>
+    </div>
+
+    <div class="container">
+        <!-- 左侧：C 源码结构体 -->
+        <div class="code-box">
+            <h3>1. quicklist 主结构体</h3>
+<pre>
+typedef struct quicklist {
+    <span class="highlight">quicklistNode *head</span>;  // 链表头节点
+    <span class="highlight">quicklistNode *tail</span>;  // 链表尾节点
+    <span class="highlight">unsigned long count</span>; // 全局总元素数
+    <span class="highlight">unsigned long len</span>;   // quicklistNode 节点总数
+    ...
+} quicklist;
+</pre>
+            <h3>2. quicklistNode 节点结构体</h3>
+<pre>
+typedef struct quicklistNode {
+    <span class="highlight">quicklistNode *prev</span>; // 前驱指针
+    <span class="highlight">quicklistNode *next</span>; // 后继指针
+    <span class="highlight">unsigned char *entry</span>;// 指向内部 listpack
+    <span class="highlight">size_t sz</span>;            // listpack 内存大小
+    <span class="highlight">unsigned int count</span>; // 当前节点内元素个数
+    ...
+} quicklistNode;
+</pre>
+            <h3>3. 底层 Listpack</h3>
+<pre>
+// Redis7 替换原 ziplist
+// 连续内存块，无指针、无连锁更新
+// 单个节点元素超限自动分裂出新 Node
+</pre>
+        </div>
+
+        <!-- 右侧：可视化+交互区域 -->
+        <div class="visual-box">
+            <h3>逻辑结构（与源码字段一一对应）</h3>
+            <div class="ql-main" id="qlMain">
+                <div class="ql-title">quicklist 主结构体</div>
+                <div class="ql-fields">
+                    • head → 头节点 &nbsp;&nbsp; • tail → 尾节点<br>
+                    • count = <span id="globalCount">11</span>（全局总元素）<br>
+                    • len = <span id="nodeLen">4</span>（节点总数）
+                </div>
+            </div>
+
+            <div id="nodeContainer">
+                <!-- 节点由 JS 动态生成 -->
+            </div>
+
+            <div class="tip">
+                ✔ Redis7 使用 Listpack 替代 Ziplist，消除连锁更新问题<br>
+                ✔ <code>list-max-listpack-size</code> 控制单节点容量，超限触发节点分裂<br>
+                ✔ 所有字段与上方 C 结构体严格一一对应
+            </div>
+
+            <div class="log" id="operLog">操作日志：初始化完成</div>
+        </div>
+    </div>
+
+    <script>
+        // 全局配置：单个listpack最大元素数（分裂阈值）
+        const MAX_ITEM_PER_NODE = 6;
+        let globalCount = 11;
+        let nodeList = [];
+        let itemSeq = 11;
+
+        // 初始化数据与视图
+        function initData() {
+            globalCount = 11;
+            itemSeq = 11;
+            nodeList = [
+                { id: 1, isHead: true, isTail: false, items: ["elem1", "elem2", "elem3"] },
+                { id: 2, isHead: false, isTail: false, items: ["elem4", "elem5"] },
+                { id: 3, isHead: false, isTail: false, items: ["elem6", "elem7", "elem8", "elem9"] },
+                { id: 4, isHead: false, isTail: true, items: ["elem10", "elem11"] }
+            ];
+            renderNodes();
+            updateGlobalInfo();
+            writeLog("结构已重置，初始化完成");
+        }
+
+        // 渲染所有节点
+        function renderNodes() {
+            const container = document.getElementById("nodeContainer");
+            container.innerHTML = "";
+
+            nodeList.forEach((node, idx) => {
+                const nodeDom = document.createElement("div");
+                nodeDom.className = "node";
+                nodeDom.dataset.id = node.id;
+
+                let headTag = node.isHead ? '<span style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:3px;font-size:12px;">Head</span>' : "";
+                let tailTag = node.isTail ? '<span style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:3px;font-size:12px;">Tail</span>' : "";
+
+                nodeDom.innerHTML = `
+                    <div class="node-title">${headTag} ${tailTag} quicklistNode ${node.id}</div>
+                    <div class="node-fields">
+                        • prev = ${node.isHead ? "NULL" : `节点${nodeList[idx-1]?.id}`}<br>
+                        • next = ${node.isTail ? "NULL" : `节点${nodeList[idx+1]?.id}`}<br>
+                        • count = ${node.items.length}（当前节点元素）
+                    </div>
+                    <div class="listpack">
+                        <div class="lp-title">listpack（连续内存）</div>
+                        <div class="lp-items" data-node-id="${node.id}">
+                            ${node.items.map(it => `<span class="item">${it}</span>`).join("")}
+                        </div>
+                    </div>
+                `;
+                container.appendChild(nodeDom);
+
+                // 节点间双向箭头
+                if (!node.isTail) {
+                    const arrow = document.createElement("div");
+                    arrow.className = "arrow";
+                    arrow.textContent = "⇄ 双向指针";
+                    container.appendChild(arrow);
+                }
+            });
+        }
+
+        // 更新全局统计字段
+        function updateGlobalInfo() {
+            document.getElementById("globalCount").innerText = globalCount;
+            document.getElementById("nodeLen").innerText = nodeList.length;
+        }
+
+        // 写入操作日志
+        function writeLog(text) {
+            const logDom = document.getElementById("operLog");
+            const now = new Date().toLocaleTimeString();
+            logDom.innerHTML += `[${now}] ${text}<br>`;
+            logDom.scrollTop = logDom.scrollHeight;
+        }
+
+        // 新增元素动画
+        function animateAdd(nodeId) {
+            const itemsDom = document.querySelector(`.lp-items[data-node-id="${nodeId}"]`);
+            const lastItem = itemsDom.lastElementChild;
+            if (lastItem) {
+                lastItem.classList.add("add");
+                setTimeout(() => lastItem.classList.remove("add"), 300);
+            }
+            const nodeDom = document.querySelector(`.node[data-id="${nodeId}"]`);
+            nodeDom.classList.add("active");
+            setTimeout(() => nodeDom.classList.remove("active"), 300);
+        }
+
+        // LPUSH 头部添加元素
+        function lpush() {
+            itemSeq++;
+            const newItem = `elem${itemSeq}`;
+            const headNode = nodeList[0];
+            headNode.items.unshift(newItem);
+            globalCount++;
+
+            writeLog(`LPUSH 新增元素 ${newItem}，写入头节点`);
+
+            // 元素超限则分裂节点
+            if (headNode.items.length > MAX_ITEM_PER_NODE) {
+                splitNode(0);
+                writeLog(`头节点元素超限，执行节点分裂`);
+            }
+
+            renderNodes();
+            updateGlobalInfo();
+            animateAdd(headNode.id);
+        }
+
+        // RPUSH 尾部添加元素
+        function rpush() {
+            itemSeq++;
+            const newItem = `elem${itemSeq}`;
+            const tailNode = nodeList[nodeList.length - 1];
+            tailNode.items.push(newItem);
+            globalCount++;
+
+            writeLog(`RPUSH 新增元素 ${newItem}，写入尾节点`);
+
+            if (tailNode.items.length > MAX_ITEM_PER_NODE) {
+                splitNode(nodeList.length - 1);
+                writeLog(`尾节点元素超限，执行节点分裂`);
+            }
+
+            renderNodes();
+            updateGlobalInfo();
+            animateAdd(tailNode.id);
+        }
+
+        // 节点分裂逻辑
+        function splitNode(idx) {
+            const oldNode = nodeList[idx];
+            const mid = Math.floor(oldNode.items.length / 2);
+            const leftItems = oldNode.items.slice(0, mid);
+            const rightItems = oldNode.items.slice(mid);
+
+            const newNode = {
+                id: Date.now(),
+                isHead: false,
+                isTail: false,
+                items: rightItems
+            };
+            oldNode.items = leftItems;
+
+            const oldIsTail = oldNode.isTail;
+            oldNode.isTail = false;
+            if (oldIsTail) {
+                newNode.isTail = true;
+            }
+
+            nodeList.splice(idx + 1, 0, newNode);
+        }
+
+        // 手动触发分裂
+        function manualSplit() {
+            if (nodeList.length === 0) return;
+            const randomIdx = Math.floor(Math.random() * nodeList.length);
+            splitNode(randomIdx);
+            writeLog(`手动触发节点分裂，分裂位置：节点${nodeList[randomIdx].id}`);
+            renderNodes();
+            updateGlobalInfo();
+        }
+
+        // 绑定按钮点击事件（已修复拼写错误）
+        document.getElementById("btnLpush").addEventListener("click", lpush);
+        document.getElementById("btnRpush").addEventListener("click", rpush);
+        document.getElementById("btnSplit").addEventListener("click", manualSplit);
+        document.getElementById("btnReset").addEventListener("click", initData);
+
+        // 页面加载完成初始化
+        window.onload = initData;
+    </script>
+</body>
+</html>

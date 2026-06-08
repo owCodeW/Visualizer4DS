@@ -194,7 +194,19 @@ cython_debug/
 #   Learn more at https://abstra.io/docs
 .abstra/
 
-# Visual Studio Code
+# Electron
+node_modules/
+.electron/
+dist/
+out/
+*.asar
+*.dmg
+*.exe
+*.msi
+*.deb
+*.rpm
+*.AppImage
+electron-builder.*
 #   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
 #   and can be added to the global gitignore or merged into this file. However, if you prefer, 
@@ -216,3 +228,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/

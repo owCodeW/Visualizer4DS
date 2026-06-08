@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>MySQL 8 B+Tree Index 可视化</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        /* B+Tree 专用样式 */
+        .bptree-stats {
+            display: flex; gap: 14px; margin: 12px 0;
+            flex-wrap: wrap;
+        }
+        .bptree-stats .stat {
+            background: #f0f9ff; border: 1px solid #bae6fd;
+            border-radius: 6px; padding: 6px 12px;
+            font-size: 13px; color: #0c4a6e;
+        }
+        .bptree-stats .stat strong { color: #0369a1; margin-right: 4px; font-size: 15px; }
+
+        .tree-canvas {
+            background: linear-gradient(180deg, #fafafa 0%, #f1f5f9 100%);
+            border-radius: 10px; padding: 28px 16px 16px;
+            min-height: 380px; overflow: auto;
+            position: relative;
+        }
+        .tree-level {
+            display: flex; justify-content: center;
+            margin-bottom: 56px; position: relative;
+        }
+        .tree-level-label {
+            position: absolute; left: 12px; top: 4px;
+            font-size: 11px; color: #64748b;
+            background: rgba(255,255,255,0.7); padding: 2px 6px; border-radius: 4px;
+        }
+
+        /* 节点通用 */
+        .bpnode {
+            display: inline-flex; flex-direction: column;
+            border: 2px solid #00758f; border-radius: 8px;
+            background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+            position: relative; margin: 0 4px;
+            transition: all 0.3s ease;
+        }
+        .bpnode-internal {
+            border-color: #00758f; background: #ecfeff;
+        }
+        .bpnode-leaf {
+            border-color: #059669; background: #f0fdf4;
+            border-style: solid;
+        }
+        .bpnode-highlight {
+            box-shadow: 0 0 0 4px #fbbf24, 0 2px 6px rgba(0,0,0,0.08);
+            transform: translateY(-3px);
+        }
+        .bpnode-path {
+            box-shadow: 0 0 0 3px #f59e0b, 0 0 0 6px rgba(245, 158, 11, 0.3);
+        }
+        .bpnode-found {
+            box-shadow: 0 0 0 3px #10b981, 0 0 0 6px rgba(16, 185, 129, 0.3);
+        }
+        .bpnode-range {
+            box-shadow: 0 0 0 3px #8b5cf6, 0 0 0 6px rgba(139, 92, 246, 0.2);
+        }
+        .bpnode-empty {
+            opacity: 0.3; border-style: dashed;
+        }
+
+        .bpnode-id {
+            position: absolute; top: -10px; right: -6px;
+            background: #00758f; color: #fff;
+            border-radius: 10px; padding: 1px 6px;
+            font-size: 10px; font-weight: bold;
+        }
+        .bpnode-leaf .bpnode-id { background: #059669; }
+
+        .bpnode-row {
+            display: flex; align-items: stretch;
+        }
+        .bpnode-cell {
+            padding: 8px 12px; min-width: 38px;
+            text-align: center; font-family: 'SF Mono', Monaco, monospace;
+            font-size: 14px; font-weight: 600;
+        }
+        .bpnode-internal .bpnode-cell { color: #0c4a6e; }
+        .bpnode-leaf .bpnode-cell { color: #064e3b; }
+        .bpnode-cell.key { background: rgba(0,0,0,0.04); }
+        .bpnode-cell.pointer {
+            background: rgba(0,117,143,0.08);
+            color: #94a3b8; font-size: 10px;
+        }
+        .bpnode-cell.divider { width: 2px; background: #00758f; opacity: 0.4; }
+        .bpnode-leaf .bpnode-cell.divider { background: #059669; opacity: 0.4; }
+
+        .bpnode-label {
+            font-size: 10px; color: #64748b;
+            padding: 2px 0; text-align: center;
+            background: rgba(0,0,0,0.03);
+            border-top: 1px solid rgba(0,0,0,0.08);
+            border-radius: 0 0 6px 6px;
+        }
+
+        /* 连线 (父子) */
+        .tree-svg {
+            position: absolute; top: 0; left: 0;
+            pointer-events: none; z-index: 0;
+        }
+        .tree-edge {
+            stroke: #94a3b8; stroke-width: 1.5; fill: none;
+        }
+        .tree-edge-active { stroke: #f59e0b; stroke-width: 2.5; }
+
+        /* 叶子链表 */
+        .leaf-link-row {
+            display: flex; justify-content: center; align-items: center;
+            flex-wrap: wrap; gap: 0; margin-top: 20px;
+            padding: 12px; background: #f0fdf4;
+            border-radius: 8px; border: 1px dashed #059669;
+        }
+        .leaf-link-row .label {
+            font-size: 11px; color: #059669; font-weight: bold;
+            width: 100%; text-align: left; margin-bottom: 6px;
+        }
+        .leaf-link-mini {
+            display: inline-flex; gap: 4px; align-items: center;
+            padding: 4px 8px; background: #fff; border-radius: 6px;
+            border: 1px solid #059669; font-size: 12px;
+            margin: 0 4px;
+        }
+        .leaf-link-mini span { color: #064e3b; font-weight: 600; font-family: monospace; }
+        .leaf-link-arrow { color: #059669; font-weight: bold; font-size: 18px; }
+
+        /* 操作说明 */
+        .op-guide {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 8px; margin-top: 10px;
+        }
+        .op-guide .g {
+            background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+            padding: 6px 10px; font-size: 12px; color: #475569;
+        }
+        .op-guide .g strong { color: #00758f; }
+    </style>
+</head>
+<body>
+    <div id="navBar"></div>
+
+    <h1 class="page-title">MySQL 8 B+Tree Index 可视化</h1>
+    <p class="page-desc">InnoDB 聚簇索引: 页分裂 / 范围扫描 / 叶子双向链表 — fanout=4, leaf_max=4</p>
+
+    <div class="encoding-bar">
+        <div class="enc-item">
+            <span class="enc-label">类型:</span>
+            <span class="enc-value" style="background:#00758f;">B+Tree Index</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">高度:</span>
+            <span id="treeHeight">0</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">节点数:</span>
+            <span id="nodeCount">0</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">kv 数:</span>
+            <span id="kvCount">0</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">状态:</span>
+            <span id="opStatus">空闲</span>
+        </div>
+    </div>
+
+    <div class="bptree-stats" id="bpStats"></div>
+
+    <div class="main-container">
+        <div class="ctrl-bar">
+            <div class="ctrl-label">插入 (INSERT)</div>
+            <input type="number" id="inputKey" placeholder="key (整数)" value="50">
+            <input type="text" id="inputValue" placeholder="value" value="row50">
+            <button id="btnInsert" style="background:#00758f;">插入</button>
+
+            <div class="ctrl-divider"></div>
+            <div class="ctrl-label">搜索 (SEARCH)</div>
+            <input type="number" id="inputSearchKey" placeholder="key" value="50">
+            <button class="warn" id="btnSearch">搜索</button>
+
+            <div class="ctrl-divider"></div>
+            <div class="ctrl-label">范围 (RANGE)</div>
+            <div style="display:flex;gap:4px;">
+                <input type="number" id="inputLow" placeholder="low" value="10" style="flex:1;">
+                <input type="number" id="inputHigh" placeholder="high" value="80" style="flex:1;">
+            </div>
+            <button class="bulk" id="btnRange" style="background:#7c3aed;">范围扫描</button>
+
+            <div class="ctrl-divider"></div>
+            <div class="ctrl-label">删除 (DELETE)</div>
+            <input type="number" id="inputDelKey" placeholder="key" value="20">
+            <button class="warn" id="btnDelete" style="background:#dc2626;">删除</button>
+
+            <div class="ctrl-divider"></div>
+            <div class="ctrl-label" style="font-size:12px;color:#7c3aed;">⚡ 批量填充 (分裂演示)</div>
+            <div class="bulk-fill-row">
+                <input type="number" id="inputBulkCount" value="15" min="1" max="100" placeholder="N">
+                <select id="bulkStrategy" style="padding:6px 8px;border-radius:4px;border:1px solid #cbd5e1;">
+                    <option value="sequential">顺序</option>
+                    <option value="random">随机</option>
+                </select>
+                <button class="bulk" id="btnBulkFill" style="flex:0 0 auto;padding:6px 10px;">填充</button>
+            </div>
+
+            <div class="ctrl-divider"></div>
+            <button class="reset" id="btnReset">重置结构</button>
+        </div>
+
+        <div class="visual-box">
+            <h3>B+Tree 结构可视化</h3>
+            <div class="tree-canvas" id="treeCanvas">
+                <div style="text-align:center;color:#94a3b8;padding:60px;">空树, 请插入数据</div>
+            </div>
+
+            <div class="op-guide">
+                <div class="g"><strong>■</strong> 蓝绿节点 = 内部 (存分隔 key)</div>
+                <div class="g"><strong>■</strong> 绿色节点 = 叶子 (存 kv + 双向链表)</div>
+                <div class="g"><strong>橙黄高亮</strong> = 搜索路径</div>
+                <div class="g"><strong>紫色高亮</strong> = 范围扫描命中</div>
+                <div class="g"><strong>绿色高亮</strong> = 搜索命中</div>
+            </div>
+
+            <div class="log" id="operLog">操作日志：等待操作...</div>
+        </div>
+    </div>
+
+    <script src="/static/api.js"></script>
+    <script>
+    document.getElementById('navBar').innerHTML = createNavBar();
+    // ===================== B+Tree API =====================
+    const BPTreeAPI = {
+        getStructure: () => apiGet('/mysql/bptree/structure'),
+        insert: (key, value) => apiPost('/mysql/bptree/insert', { key, value }),
+        search: (key) => apiPost('/mysql/bptree/search', { key }),
+        delete: (key) => apiPost('/mysql/bptree/delete', { key }),
+        range: (low, high) => apiPost('/mysql/bptree/range', { low, high }),
+        bulkFill: (count, strategy) => apiPost('/mysql/bptree/bulk-fill', { count, strategy }),
+        reset: () => apiPost('/mysql/bptree/reset', {}),
+    };
+
+    // ===================== 渲染 B+Tree =====================
+    let currentStructure = null;
+    let lastHighlight = { type: null, ids: [] };
+
+    function renderBPTree(structure) {
+        currentStructure = structure;
+        const canvas = document.getElementById('treeCanvas');
+
+        if (!structure.nodes || structure.nodes.length === 0) {
+            canvas.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:60px;">空树, 请插入数据</div>';
+            updateStats(structure);
+            return;
+        }
+
+        // 按 depth 分层
+        const levels = {};
+        for (const n of structure.nodes) {
+            if (!levels[n.depth]) levels[n.depth] = [];
+            levels[n.depth].push(n);
+        }
+        const maxDepth = Math.max(...Object.keys(levels).map(Number));
+
+        // 构建 HTML
+        let html = '';
+        for (let d = 1; d <= maxDepth; d++) {
+            const nodes = (levels[d] || []).slice().sort((a, b) => a.id - b.id);
+            const labelMap = {1: '根 (Root)', 2: '叶子层 (Leaf Level)'};
+            html += `<div class="tree-level" data-depth="${d}">`;
+            html += `<div class="tree-level-label">${labelMap[d] || `第 ${d} 层`} · ${nodes.length} 个节点</div>`;
+            for (const n of nodes) {
+                html += renderNode(n);
+            }
+            html += '</div>';
+        }
+
+        // 叶子双向链表
+        if (structure.leaf_links && structure.leaf_links.length > 0) {
+            const leafMap = {};
+            for (const n of structure.nodes) {
+                if (n.type === 'leaf') leafMap[n.id] = n;
+            }
+            html += '<div class="leaf-link-row">';
+            html += '<div class="label">↔ 叶子节点双向链表 (范围扫描通道)</div>';
+            let first = true;
+            const visited = new Set();
+            let cur = structure.first_leaf_id;
+            while (cur && !visited.has(cur)) {
+                visited.add(cur);
+                if (!first) html += '<span class="leaf-link-arrow">⇄</span>';
+                first = false;
+                const leaf = leafMap[cur];
+                const keys = leaf ? leaf.keys.join(',') : '?';
+                html += `<div class="leaf-link-mini">L${cur} <span>[${keys}]</span></div>`;
+                const link = structure.leaf_links.find(l => l.from === cur);
+                cur = link ? link.to : null;
+            }
+            html += '</div>';
+        }
+
+        canvas.innerHTML = html;
+        updateStats(structure);
+        applyHighlight();
+    }
+
+    function renderNode(n) {
+        const isEmpty = n.type === 'leaf' && n.keys.length === 0;
+        const classes = ['bpnode'];
+        if (n.type === 'internal') classes.push('bpnode-internal');
+        if (n.type === 'leaf') classes.push('bpnode-leaf');
+        if (isEmpty) classes.push('bpnode-empty');
+        const cls = classes.join(' ');
+        const typeLabel = n.type === 'internal' ? 'I' : 'L';
+
+        let row = '<div class="bpnode-row">';
+        if (n.type === 'internal') {
+            // [ptr, key, ptr, key, ..., ptr]
+            row += '<div class="bpnode-cell pointer">↓</div>';
+            for (let i = 0; i < n.keys.length; i++) {
+                row += `<div class="bpnode-cell key">${n.keys[i]}</div>`;
+                row += '<div class="bpnode-cell pointer">↓</div>';
+            }
+        } else {
+            // 叶子: [key, value, key, value, ...]
+            for (let i = 0; i < n.keys.length; i++) {
+                row += `<div class="bpnode-cell key">${n.keys[i]}</div>`;
+                row += `<div class="bpnode-cell">${escapeHtml(n.values[i] || '')}</div>`;
+            }
+        }
+        row += '</div>';
+
+        const label = n.type === 'internal'
+            ? `内部 ${typeLabel}${n.id} (${n.keys.length} keys)`
+            : `叶子 ${typeLabel}${n.id} (${n.keys.length} kv)`;
+
+        return `<div class="${cls}" data-node-id="${n.id}">${row}<div class="bpnode-label">${label}</div><div class="bpnode-id">${typeLabel}${n.id}</div></div>`;
+    }
+
+    function applyHighlight() {
+        if (!lastHighlight || !lastHighlight.ids || lastHighlight.ids.length === 0) return;
+        for (const id of lastHighlight.ids) {
+            const el = document.querySelector(`.bpnode[data-node-id="${id}"]`);
+            if (el) {
+                el.classList.remove('bpnode-path', 'bpnode-found', 'bpnode-range');
+                if (lastHighlight.type === 'path') el.classList.add('bpnode-path');
+                else if (lastHighlight.type === 'found') el.classList.add('bpnode-found');
+                else if (lastHighlight.type === 'range') el.classList.add('bpnode-range');
+            }
+        }
+    }
+
+    function clearHighlight() {
+        document.querySelectorAll('.bpnode').forEach(el => {
+            el.classList.remove('bpnode-path', 'bpnode-found', 'bpnode-range', 'bpnode-highlight');
+        });
+    }
+
+    function updateStats(s) {
+        document.getElementById('treeHeight').textContent = s.height || 0;
+        document.getElementById('nodeCount').textContent = (s.nodes || []).length;
+        document.getElementById('kvCount').textContent = s.size || 0;
+
+        // 统计节点
+        const internalCount = (s.nodes || []).filter(n => n.type === 'internal').length;
+        const leafCount = (s.nodes || []).filter(n => n.type === 'leaf').length;
+        const avgFill = (s.nodes || []).filter(n => n.type === 'leaf').reduce((sum, n) => sum + n.keys.length, 0) / Math.max(1, leafCount);
+        document.getElementById('bpStats').innerHTML = `
+            <div class="stat"><strong>${internalCount}</strong> 内部节点</div>
+            <div class="stat"><strong>${leafCount}</strong> 叶子节点</div>
+            <div class="stat">叶子平均填充 <strong>${avgFill.toFixed(1)}</strong> / ${s.leaf_max}</div>
+        `;
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+    }
+
+    // ===================== 操作处理 =====================
+    const logEl = document.getElementById('operLog');
+    const statusEl = document.getElementById('opStatus');
+
+    function setStatus(text, color = '#0ea5e9') {
+        statusEl.textContent = text;
+        statusEl.style.color = color;
+    }
+
+    async function refresh() {
+        const s = await BPTreeAPI.getStructure();
+        renderBPTree(s);
+    }
+
+    document.getElementById('btnInsert').onclick = async () => {
+        const key = parseInt(document.getElementById('inputKey').value);
+        const value = document.getElementById('inputValue').value || `row${key}`;
+        if (isNaN(key)) return;
+        setStatus('插入中...');
+        const r = await BPTreeAPI.insert(key, value);
+        renderBPTree(r.structure);
+        writeLog(logEl, `[INSERT] key=${key}, value=${value}` + (r.result.split ? ' [触发分裂]' : ''));
+        setStatus(r.result.split ? '分裂完成' : '已插入', r.result.split ? '#d97706' : '#059669');
+    };
+
+    document.getElementById('btnSearch').onclick = async () => {
+        const key = parseInt(document.getElementById('inputSearchKey').value);
+        if (isNaN(key)) return;
+        setStatus('搜索中...');
+        clearHighlight();
+        const r = await BPTreeAPI.search(key);
+        renderBPTree(r.structure);
+        const pathIds = r.result.path.map(p => p.node_id);
+        if (r.result.found) {
+            lastHighlight = { type: 'found', ids: pathIds };
+            writeLog(logEl, `[SEARCH] key=${key} 命中 -> value=${r.result.value}  (路径: ${pathIds.join('→')})`);
+            setStatus('命中', '#059669');
+        } else {
+            lastHighlight = { type: 'path', ids: pathIds };
+            writeLog(logEl, `[SEARCH] key=${key} 未命中 (查至路径: ${pathIds.join('→')})`, 'blocked');
+            setStatus('未命中', '#dc2626');
+        }
+        applyHighlight();
+    };
+
+    document.getElementById('btnRange').onclick = async () => {
+        const low = parseInt(document.getElementById('inputLow').value);
+        const high = parseInt(document.getElementById('inputHigh').value);
+        if (isNaN(low) || isNaN(high)) return;
+        setStatus('范围扫描中...');
+        clearHighlight();
+        const r = await BPTreeAPI.range(low, high);
+        renderBPTree(r.structure);
+        lastHighlight = { type: 'range', ids: r.result.visited_leaves || [] };
+        applyHighlight();
+        const resultKeys = r.result.results.map(x => x.key).join(',');
+        writeLog(logEl, `[RANGE] [${low},${high}] 命中 ${r.result.results.length} 条: {${resultKeys}}  (扫描叶子: ${(r.result.visited_leaves || []).join('→')})`);
+        setStatus(`命中 ${r.result.results.length} 条`, '#7c3aed');
+    };
+
+    document.getElementById('btnDelete').onclick = async () => {
+        const key = parseInt(document.getElementById('inputDelKey').value);
+        if (isNaN(key)) return;
+        setStatus('删除中...');
+        const r = await BPTreeAPI.delete(key);
+        renderBPTree(r.structure);
+        if (r.result.ok) {
+            writeLog(logEl, `[DELETE] key=${key} 删除成功`);
+            setStatus('已删除', '#dc2626');
+        } else {
+            writeLog(logEl, `[DELETE] key=${key} 不存在`, 'blocked');
+            setStatus('key 不存在', '#dc2626');
+        }
+    };
+
+    document.getElementById('btnBulkFill').onclick = async () => {
+        const count = parseInt(document.getElementById('inputBulkCount').value) || 10;
+        const strategy = document.getElementById('bulkStrategy').value;
+        setStatus(`批量填充 ${count} 个...`);
+        const r = await BPTreeAPI.bulkFill(count, strategy);
+        renderBPTree(r.structure);
+        writeLog(logEl, `[BULK_FILL] ${strategy} 插入 ${count} 个, 触发 ${r.split_count} 次分裂`);
+        setStatus(`分裂 ${r.split_count} 次`, '#d97706');
+    };
+
+    document.getElementById('btnReset').onclick = async () => {
+        const r = await BPTreeAPI.reset();
+        renderBPTree(r.structure);
+        clearHighlight();
+        logEl.innerHTML = '';
+        writeLog(logEl, '[RESET] B+Tree 已重置');
+        setStatus('已重置', '#64748b');
+    };
+
+    // 启动
+    (async () => {
+        await refresh();
+    })();
+    </script>
+</body>
+</html>

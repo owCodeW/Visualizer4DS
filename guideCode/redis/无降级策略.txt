@@ -1,0 +1,89 @@
+结论先说：**Redis 底层编码/结构「只升级、不降级」，没有自动降级策略，7.0 也一样**。下面分类型讲清楚，并把它加到你的可视化项目设计里。
+
+---
+
+## 一、各类型「升级不可逆」规则（Redis 7）
+
+### 1. String：int → embstr → raw（单向）
+- int：存整数（long 范围）
+- embstr：≤44 字节短字符串（redisObject + SDS 一块内存）
+- raw：>44 字节，或 embstr 被修改（需重新分配内存）
+
+**不可逆点**
+- int → embstr：改非整数，**不回退**
+- embstr → raw：超长或修改，**不回退**
+- 即使把长字符串改短到 ≤44，也**不会从 raw 变回 embstr**
+
+### 2. Set：intset → hashtable；listpack → hashtable
+- intset：全是整数、且范围小
+- 一旦插入非整数/超大整数，升级为 hashtable，**永不降级**
+- Redis7 小集合用 listpack，超限→hashtable，**不可逆**
+
+### 3. Hash：listpack → hashtable
+- listpack：元素数 ≤128、每个值 ≤64B（默认）
+- 任一条件突破 → 转 hashtable，**不降级**
+- 即使后来删到只剩几个小元素，**仍为 hashtable**
+
+### 4. ZSet：listpack → skiplist+hashtable
+- listpack：元素数 ≤128、值 ≤64B（默认）
+- 超限 → 跳表+哈希表，**不可逆**
+
+### 5. List：listpack → quicklist（Redis7）
+- 小列表：listpack
+- 大列表：quicklist（双向链表 + 多个 listpack 节点）
+- 升级后**不自动降级**
+
+---
+
+## 二、为什么 Redis 不做「降级」？
+1. **性能代价大**  
+降级需要：重新分配内存、复制数据、重建结构、释放旧结构。  
+高频删元素就反复升降级 → O(n) 开销，反而变慢。
+
+2. **设计理念：宁可多占内存，也要稳定高性能**  
+- 升级触发少（一次到位）
+- 降级触发多（删元素就可能要降）
+- 官方选择「**一次升级，永久享受高性能**」
+
+3. **特例：哈希表 rehash（收缩）≠ 编码降级**
+- 当负载因子 < 0.1，会**收缩哈希表（减少桶数）**
+- 但**编码不变**：hashtable 还是 hashtable，不会变回 listpack
+
+---
+
+## 三、你的可视化项目要怎么展示「不可逆」？
+
+### 1. 新增核心状态提示
+每个结构页面加一行：
+> ✅ 当前编码：embstr（升级不可逆）  
+> ⚠️ 说明：修改为长字符串后升级为 raw，**无法自动退回 embstr**
+
+### 2. 操作演示设计（重点）
+#### String 演示流程
+1. SET k 100 → int
+2. SET k hello → embstr（提示：int→embstr，不可逆）
+3. SET k [45字节长串] → raw（提示：embstr→raw，不可逆）
+4. SET k hi（改回短串）→ **仍为 raw**（高亮提示：不会降级）
+
+#### Hash 演示流程
+1. HSET h f1 v1 ...（10个小字段）→ listpack
+2. HSET h f11 [长value] → hashtable（提示：升级不可逆）
+3. HDEL h f11（删长字段）→ **仍为 hashtable**（提示：不降级）
+
+### 3. 日志区新增「不可逆标记」
+```
+执行：SET k "hi"
+原编码：raw
+新编码：raw
+原因：已升级为 raw，不支持降级
+```
+
+### 4. 前端视觉强化
+- 升级箭头：**单向箭头（→）**，不可回退
+- 降级按钮：**置灰不可点击**，提示「Redis 不支持自动降级」
+
+---
+
+## 四、一句话总结给用户（面试也这么答）
+**Redis 底层编码/结构（String/Set/Hash/ZSet/List）全部是「只升级、不降级」，没有自动降级策略；哈希表收缩（rehash）不算编码降级。**
+
