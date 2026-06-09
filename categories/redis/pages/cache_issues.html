@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Redis 缓存三大问题：穿透 · 击穿 · 雪崩 | 图文详解</title>
+    <!-- Font Awesome 6 (免费图标库，用于图文并茂) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Google Fonts: 优雅字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <!-- 项目全局样式 (含导航栏) -->
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, sans-serif;
+            background: linear-gradient(145deg, #f4f9ff 0%, #e9f0fa 100%);
+            color: #1a2c3e;
+            line-height: 1.4;
+            padding: 2rem 1.5rem;
+        }
+
+        /* 主容器 */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* 头部区域 */
+        .hero {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        .hero h1 {
+            font-size: 2.6rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #1E3C72, #2A5298);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            letter-spacing: -0.01em;
+            display: inline-block;
+            margin-bottom: 0.5rem;
+        }
+        .hero .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: rgba(255,255,240,0.7);
+            backdrop-filter: blur(2px);
+            padding: 0.4rem 1rem;
+            border-radius: 40px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #1e4668;
+            border: 1px solid rgba(42,82,152,0.2);
+            margin-top: 0.5rem;
+        }
+        .hero p {
+            max-width: 700px;
+            margin: 1rem auto 0;
+            font-size: 1.1rem;
+            color: #2c4c6e;
+            font-weight: 400;
+        }
+
+        /* 三卡竖直排列 (每张铺满横屏) */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+            margin-top: 1rem;
+        }
+
+        /* 卡片样式 */
+        .card {
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(2px);
+            border-radius: 2rem;
+            box-shadow: 0 20px 35px -12px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0,0,0,0.02);
+            transition: transform 0.25s ease, box-shadow 0.3s ease;
+            overflow: hidden;
+            border: 1px solid rgba(255,255,255,0.6);
+        }
+        .card:hover {
+            transform: translateY(-6px);
+            box-shadow: 0 28px 40px -16px rgba(0, 32, 64, 0.2);
+            background: #ffffff;
+        }
+
+        /* 卡片头部 区分三大主题色 */
+        .card-header {
+            padding: 1.4rem 1.8rem 0.8rem 1.8rem;
+            border-bottom: 3px solid;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .card-header i {
+            font-size: 2.4rem;
+        }
+        .card-header h2 {
+            font-size: 1.7rem;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
+
+        /* 不同主题色彩 */
+        .card.penetration .card-header { border-bottom-color: #f97316; }
+        .card.penetration .card-header i { color: #f97316; }
+        .card.penetration .card-header h2 { color: #c2410c; }
+
+        .card.breakdown .card-header { border-bottom-color: #eab308; }
+        .card.breakdown .card-header i { color: #eab308; }
+        .card.breakdown .card-header h2 { color: #a16207; }
+
+        .card.avalanche .card-header { border-bottom-color: #3b82f6; }
+        .card.avalanche .card-header i { color: #3b82f6; }
+        .card.avalanche .card-header h2 { color: #1e4a76; }
+
+        /* 卡片内容区 */
+        .card-body {
+            padding: 1.6rem 1.8rem 1.8rem 1.8rem;
+        }
+
+        /* 描述块 */
+        .description {
+            background: #f8fafc;
+            border-radius: 1.2rem;
+            padding: 0.9rem 1.2rem;
+            margin-bottom: 1.4rem;
+            border-left: 5px solid;
+            font-size: 0.95rem;
+            line-height: 1.45;
+        }
+        .card.penetration .description { border-left-color: #f97316; background: #fff7ed; }
+        .card.breakdown .description { border-left-color: #eab308; background: #fefce8; }
+        .card.avalanche .description { border-left-color: #3b82f6; background: #eff6ff; }
+
+        .section-title {
+            font-weight: 700;
+            font-size: 1rem;
+            margin: 1rem 0 0.5rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .section-title i {
+            font-size: 1rem;
+            width: 1.6rem;
+            color: #2c5a7a;
+        }
+        .cause-list, .solution-list {
+            list-style: none;
+            padding-left: 0.2rem;
+        }
+        .cause-list li, .solution-list li {
+            margin-bottom: 0.55rem;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.65rem;
+        }
+        .cause-list li i.fa-times-circle { color: #dc2626; font-size: 0.8rem; margin-top: 0.2rem; }
+        .cause-list li i.fa-exclamation-triangle { color: #ea580c; }
+        .solution-list li i.fa-check-circle { color: #16a34a; }
+        .solution-list li i.fa-shield-alt { color: #2563eb; }
+        .solution-list li i.fa-clock { color: #6b7280; }
+
+        /* 示意图区域 (图文并茂关键) */
+        .illustration {
+            background: #ffffffea;
+            border-radius: 1.2rem;
+            padding: 1rem 1rem;
+            margin: 1.5rem 0 0.5rem 0;
+            border: 1px solid #e2edf7;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+        }
+        .illustration p.illus-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            color: #5c7c9e;
+            margin-bottom: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .diagram {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 0.6rem 1rem;
+            margin: 0.2rem 0;
+        }
+        /* 雪崩图: 上下结构 (过期key → DB) */
+        .avalanche-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .diagram-down {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: #94a3b8;
+            font-size: 0.75rem;
+            line-height: 1.1;
+        }
+        .diagram-down .arrow-icon { font-size: 1.4rem; }
+        .diagram-down span { margin-top: 2px; }
+        .diagram-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #f1f5f9;
+            border-radius: 1rem;
+            padding: 0.5rem 0.8rem;
+            min-width: 70px;
+            text-align: center;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+        .diagram-item i {
+            font-size: 1.6rem;
+            margin-bottom: 5px;
+        }
+        .arrow-icon {
+            font-size: 1.3rem;
+            color: #94a3b8;
+        }
+        .badge-solution {
+            background: #eef2ff;
+            border-radius: 20px;
+            padding: 4px 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-top: 8px;
+            display: inline-block;
+            color: #1f3a6b;
+        }
+        .highlight-red {
+            color: #dc2626;
+            font-weight: 600;
+        }
+        .strike {
+            text-decoration: line-through;
+            color: #b91c1c;
+        }
+
+        hr {
+            margin: 1rem 0 0.2rem;
+            border: 0;
+            height: 1px;
+            background: linear-gradient(to right, #cbd5e1, transparent);
+        }
+        .footer-note {
+            text-align: center;
+            margin-top: 3rem;
+            font-size: 0.8rem;
+            color: #4b6f8c;
+            border-top: 1px solid rgba(100,116,139,0.2);
+            padding-top: 2rem;
+        }
+        @media (max-width: 700px) {
+            body { padding: 1rem; }
+            .card-header h2 { font-size: 1.4rem; }
+            .diagram-item { min-width: 60px; padding: 0.4rem 0.5rem; }
+            .arrow-icon { font-size: 1rem; }
+        }
+        .tooltip-info {
+            cursor: help;
+            border-bottom: 1px dashed #90a4c3;
+        }
+    </style>
+</head>
+<body>
+<div id="navBar"></div>
+
+<div class="container">
+    <div class="hero">
+        <h1><i class="fas fa-database" style="color:#2A5298; margin-right: 12px;"></i>Redis 缓存三大问题</h1>
+    </div>
+
+    <div class="cards-grid">
+
+        <!-- 1. 缓存穿透 -->
+        <div class="card penetration">
+            <div class="card-header">
+                <h2>缓存穿透</h2>
+            </div>
+            <div class="card-body">
+                <div class="description">
+                    <i class="fas fa-dot-circle" style="margin-right: 6px; color:#f97316;"></i>
+                    <strong>描述：</strong> 查询一个<strong class="highlight-red">根本不存在的数据</strong>，缓存层和数据库都没有命中。恶意攻击或大量非法key导致请求直接打到数据库，压垮DB。
+                </div>
+
+                <div class="section-title"><i class="fas fa-cogs"></i> 成因分析</div>
+                <ul class="cause-list">
+                    <li><i class="fas fa-times-circle"></i> 业务层校验不严谨，查询了数据库中不存在的数据ID。</li>
+                    <li><i class="fas fa-times-circle"></i> 业务层面：新上线的业务缓存和数据库中不存在该数据</li>
+                    <li><i class="fas fa-user-secret"></i> 恶意攻击/爬虫使用不存在的key高频访问。</li>
+                    <li><i class="fas fa-database"></i> 缓存形同虚设，每次请求都绕开缓存直达DB。</li>
+                </ul>
+
+                <div class="section-title"><i class="fas fa-tools"></i> 解决方案</div>
+                <ul class="solution-list">
+                    <li><i class="fas fa-check-circle"></i> <strong>布隆过滤器 (BloomFilter)</strong>在缓存前加一层过滤器，拦截不存在key。</li>
+                    <li><i class="fas fa-check-circle"></i> <strong>缓存空对象</strong> 将null结果短暂缓存（如几分钟），避免反复穿透。</li>
+                    <li><i class="fas fa-shield-alt"></i> 接口层加强参数校验，限制非法key频率/模式。</li>
+                </ul>
+
+                <!-- 示意图：穿透流程 + 布隆过滤器示意 -->
+                <div class="illustration">
+                    <p class="illus-title"><i class="fas fa-chalkboard-user"></i> 穿透示意 · 攻击直达DB</p>
+                    <div class="diagram">
+                        <div class="diagram-item"><i class="fas fa-user"></i><span>请求</span></div>
+                        <i class="fas fa-arrow-right arrow-icon"></i>
+                        <div class="diagram-item"><i class="fas fa-database"></i><span>Redis缓存</span><i class="fas fa-ban" style="color:#f97316; font-size:0.8rem;"></i></div>
+                        <i class="fas fa-arrow-right arrow-icon"></i>
+                        <div class="diagram-item" style="background:#fee2e2;"><i class="fas fa-database"></i><span>数据库 (被打穿)</span><i class="fas fa-exclamation-triangle" style="color:#dc2626;"></i></div>
+                    </div>
+                    <div style="display: flex; justify-content: center; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
+                        <span class="badge-solution"><i class="fas fa-filter"></i> 布隆过滤器预检</span>
+                        <span class="badge-solution"><i class="fas fa-box"></i> 缓存空值</span>
+                    </div>
+                    <div style="font-size:0.7rem; color:#4b5563; text-align: center; margin-top: 8px;">
+                        ✅ 布隆过滤器快速判断“绝对不存在”，将恶意请求挡在缓存之前
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. 缓存击穿 -->
+        <div class="card breakdown">
+            <div class="card-header">
+                <h2>缓存击穿</h2>
+            </div>
+            <div class="card-body">
+                <div class="description">
+                    <i class="fas fa-bolt" style="margin-right: 6px; color:#eab308;"></i>
+                    <strong>描述：</strong> 某个<strong class="highlight-red">热点Key</strong>在失效的瞬间，大量并发请求同时查询该key，缓存未命中，全部请求涌入数据库，导致DB压力瞬间飙升。
+                </div>
+
+                <div class="section-title"><i class="fas fa-cogs"></i> 成因分析</div>
+                <ul class="cause-list">
+                    <li><i class="fas fa-hourglass-half"></i> 热点数据设置了过期时间，在高并发时刻突然失效。</li>
+                    <li><i class="fas fa-users"></i> 海量线程同时重建缓存，未做并发控制，DB被击穿。</li>
+                    <li><i class="fas fa-chart-line"></i> 类似秒杀、爆款商品详情页，缓存重建代价昂贵。</li>
+                </ul>
+
+                <div class="section-title"><i class="fas fa-tools"></i> 解决方案</div>
+                <ul class="solution-list">
+                    <li><i class="fas fa-check-circle"></i> <strong>互斥锁 (Mutex)</strong> 只允许一个线程重建缓存，其余等待/重试。</li>
+                    <li><i class="fas fa-check-circle"></i> <strong>逻辑过期</strong> 不设置物理过期，后台异步刷新热点数据。</li>
+                    <li><i class="fas fa-check-circle"></i> <strong>永不过期策略</strong> + 定时更新，结合熔断降级保护DB。</li>
+                </ul>
+
+                <!-- 击穿示意图：热点失效，洪水般涌向DB + 锁机制 -->
+                <div class="illustration">
+                    <p class="illus-title"><i class="fas fa-charging-station"></i> 击穿示意 · 热点key过期瞬间</p>
+                    <div class="diagram">
+                        <div style="display: flex; flex-direction: column; align-items:center;">
+                            <div style="display: flex; gap: 6px;">
+                                <div class="diagram-item"><i class="fas fa-user"></i>线程1</div>
+                                <div class="diagram-item"><i class="fas fa-user"></i>线程2</div>
+                                <div class="diagram-item"><i class="fas fa-user"></i>线程N</div>
+                            </div>
+                          
+                        </div>
+                        <i class="fas fa-arrow-right arrow-icon"></i>
+                        <div class="diagram-item"><i class="fas fa-database"></i><span>Redis</span><i class="fas fa-fire" style="color:#eab308;"></i><span class="strike">Key过期</span></div>
+                        <i class="fas fa-arrow-right arrow-icon"></i>
+                        <div class="diagram-item" style="background:#ffe6e6;"><i class="fas fa-database"></i><span>数据库 (瞬时高负载)</span><i class="fas fa-skull-crossbones"></i></div>
+                    </div>
+                    <div class="diagram" style="margin-top: 8px;">
+                        <i class="fas fa-lock" style="color:#16a34a;"></i>
+                        <span style="font-weight:500; font-size:0.75rem;">互斥锁 → 单线程重建缓存 → 其他线程等待获取最新值</span>
+                    </div>
+                    <div style="background:#fef9e6; border-radius: 28px; padding: 5px 8px; margin-top: 10px; text-align: center; font-size:0.75rem;">
+                        <i class="fas fa-exchange-alt"></i> 常用工具：Redis SETNX 实现分布式锁，或使用 Redisson
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 缓存雪崩 -->
+        <div class="card avalanche">
+            <div class="card-header">
+                <h2>缓存雪崩</h2>
+            </div>
+            <div class="card-body">
+                <div class="description">
+                    <i class="fas fa-mountain" style="margin-right: 6px; color:#3b82f6;"></i>
+                    <strong>描述：</strong> 缓存中<strong class="highlight-red">大量Key在同一时间段集体失效</strong>，或Redis节点宕机，导致海量请求直接击穿至数据库，引发连锁故障甚至服务雪崩。
+                </div>
+
+                <div class="section-title"><i class="fas fa-cogs"></i> 成因分析</div>
+                <ul class="cause-list">
+                    <li><i class="fas fa-calendar-times"></i> 大量key设置了相同的过期时间（如整点失效）。</li>
+                    <li><i class="fas fa-server"></i> Redis单点故障或网络分区导致缓存不可用。</li>
+                    <li><i class="fas fa-tachometer-alt"></i> 预热期不足，高峰期缓存大面积缺失。</li>
+                </ul>
+
+                <div class="section-title"><i class="fas fa-tools"></i> 解决方案</div>
+                <ul class="solution-list">
+                    <li><i class="fas fa-check-circle"></i> <strong>过期时间随机化</strong> — 基础时间上加随机偏移，避免集体失效。</li>
+                    <li><i class="fas fa-check-circle"></i> <strong>高可用集群</strong> (Redis Sentinel/Cluster) 避免单点故障。</li>
+                    <li><i class="fas fa-check-circle"></i> <strong>多级缓存 + 熔断降级</strong> (本地缓存Caffeine/Hystrix限流)。</li>
+                    <li><i class="fas fa-check-circle"></i> 缓存预热 & 持久化备份，搭配请求限流。</li>
+                </ul>
+
+                <!-- 雪崩示意图：多个缓存同时过期，压垮DB-->
+                <div class="illustration">
+                    <p class="illus-title"><i class="fas fa-chart-simple"></i> 雪崩示意 · 缓存集体失效</p>
+                    <div class="avalanche-diagram">
+                        <div class="diagram">
+                            <div class="diagram-item"><i class="fas fa-database"></i>Key_A<br><i class="fas fa-hourglass-end"></i> 过期</div>
+                            <div class="diagram-item"><i class="fas fa-database"></i>Key_B<br><i class="fas fa-hourglass-end"></i> 过期</div>
+                            <div class="diagram-item"><i class="fas fa-database"></i>Key_C<br><i class="fas fa-hourglass-end"></i> 过期</div>
+                            <div class="diagram-item"><i class="fas fa-ellipsis-h"></i> ...</div>
+                        </div>
+                        <div class="diagram-down"><i class="fas fa-arrow-down arrow-icon"></i><span>集体击穿</span></div>
+                        <div class="diagram">
+                            <div class="diagram-item" style="background:#fee2e2;"><i class="fas fa-database"></i>数据库<br><i class="fas fa-chart-line"></i> 压力激增</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: center; gap: 12px; margin-top: 14px; flex-wrap:wrap;">
+                        <span class="badge-solution"><i class="fas fa-random"></i> TTL + random()</span>
+                        <span class="badge-solution"><i class="fas fa-layer-group"></i> 多级缓存(L1/L2)</span>
+                        <span class="badge-solution"><i class="fas fa-robot"></i> 熔断限流</span>
+                    </div>
+                    <div style="font-size:0.7rem; color: #1e4668; text-align: center; margin-top: 8px;">
+                        💡 最佳实践：给缓存过期时间增加1~5分钟随机值，错开高峰重建
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 额外对比 & 总结补充，提升知识完整性 -->
+    <div style="margin-top: 3rem; background: white; border-radius: 2rem; padding: 1.5rem 2rem; box-shadow: 0 8px 20px rgba(0,0,0,0.05);">
+        <h3 style="display: flex; align-items: center; gap: 10px; font-weight: 600;"><i class="fas fa-lightbulb"></i> 三者核心区别 & 应对策略总览</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 1.5rem; justify-content: space-between; margin-top: 1rem;">
+            <div style="flex:1; min-width: 180px;">
+                <div><i class="fas fa-crosshairs" style="color:#f97316;"></i> <strong>穿透</strong>：查无此key</div>
+                <div style="font-size:0.85rem; color:#374151;">👉 方案：布隆过滤器 + 空对象缓存</div>
+            </div>
+            <div style="flex:1; min-width: 180px;">
+                <div><i class="fas fa-fire" style="color:#eab308;"></i> <strong>击穿</strong>：热点key失效瞬间</div>
+                <div style="font-size:0.85rem;">👉 方案：互斥锁/逻辑过期/后台异步</div>
+            </div>
+            <div style="flex:1; min-width: 180px;">
+                <div><i class="fas fa-mountain" style="color:#3b82f6;"></i> <strong>雪崩</strong>：大量key同时失效/Redis宕机</div>
+                <div style="font-size:0.85rem;">👉 方案：随机TTL + 集群 + 熔断降级</div>
+            </div>
+        </div>
+        <hr>
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between;">
+            <span><i class="fas fa-chart-line"></i> 高并发场景下，推荐组合拳：<strong>布隆过滤器 + 热点永不过期 + 随机的过期时间 + 限流兜底</strong></span>
+            <span><i class="fas fa-code-branch"></i> 分布式架构中善用 Redisson / Sentinel 等组件</span>
+        </div>
+    </div>
+
+    <div class="footer-note">
+        <i class="fas fa-dharmachakra"></i> Redis 缓存三大经典问题 · 从根本上提升系统稳定性 & 抗压能力
+        <br><span style="opacity:0.7;">✔ 图文解析帮助理解核心原理 | 适用于架构设计 & 面试突击</span>
+    </div>
+</div>
+
+<script src="/static/api.js"></script>
+<script>
+    // 注入项目导航栏 (与其它 Redis 页面保持一致)
+    document.getElementById('navBar').innerHTML = createNavBar();
+</script>
+</body>
+</html>

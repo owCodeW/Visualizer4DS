@@ -138,6 +138,7 @@ function createNavBar() {
         <a href="/categories/redis/pages/hash.html" class="hash">Hash</a>
         <a href="/categories/redis/pages/set.html" class="set">Set</a>
         <a href="/categories/redis/pages/zset.html" class="zset">ZSet</a>
+        <a href="/categories/redis/pages/cache_issues.html" class="cache">缓存三大问题</a>
         <span class="nav-sep">|</span>
         <a href="/categories/mysql/pages/bptree.html" class="mysql">B+Tree</a>
     </div>`;

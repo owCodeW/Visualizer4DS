@@ -50,6 +50,7 @@ body {
 .nav-bar a.hash { background: #059669; }
 .nav-bar a.set { background: #d97706; }
 .nav-bar a.zset { background: #dc2626; }
+.nav-bar a.cache { background: #7c3aed; }
 .nav-bar a.mysql { background: #00758f; }
 .nav-bar a.elasticsearch { background: #10b981; }
 .nav-bar a.rocketmq { background: #f59e0b; }

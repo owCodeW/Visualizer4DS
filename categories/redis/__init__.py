@@ -85,3 +85,14 @@ register_type("redis", TypeInfo(
     icon="Z",
     color="#dc2626",
 ))
+
+# 缓存三大问题 (图文知识页, 无后端 API)
+register_type("redis", TypeInfo(
+    name="缓存三大问题",
+    description="穿透 · 击穿 · 雪崩 成因剖析与解决方案图文详解",
+    encodings=["penetration", "breakdown", "avalanche"],
+    page_path="/categories/redis/pages/cache_issues.html",
+    api_prefix="",
+    icon="⚠",
+    color="#7c3aed",
+))
