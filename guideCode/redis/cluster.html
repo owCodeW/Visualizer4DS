@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis 7 集群方案 · 节点关系深度解析</title>
+    <style>
+        :root {
+            --bg: #0a0e17;
+            --panel-bg: #111827;
+            --card-bg: #1a1f2e;
+            --border: #2a3345;
+            --text: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #f59e0b;
+            --accent2: #3b82f6;
+            --master-color: #ef4444;
+            --master-glow: #ef444466;
+            --slave-color: #3b82f6;
+            --slave-glow: #3b82f666;
+            --sentinel-color: #f59e0b;
+            --sentinel-glow: #f59e0b66;
+            --proxy-color: #8b5cf6;
+            --proxy-glow: #8b5cf666;
+            --client-color: #6b7280;
+            --write-flow: #f87171;
+            --read-flow: #34d399;
+            --repl-flow: #60a5fa;
+            --gossip-flow: #c084fc;
+            --slot-color: #fb923c;
+            --tab-active-bg: #1e293b;
+            --tab-hover-bg: #1a2340;
+            --tag-bg: #1e293b;
+            --highlight: #fbbf24;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+            min-height: 100vh;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* 背景粒子动画 */
+        .bg-particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.4;
+        }
+        .bg-particle {
+            position: absolute;
+            border-radius: 50%;
+            animation: floatUp linear infinite;
+            background: var(--accent2);
+        }
+        @keyframes floatUp {
+            0% {
+                transform: translateY(105vh) scale(0);
+                opacity: 0;
+            }
+            10% {
+                opacity: 1;
+            }
+            90% {
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(-10vh) scale(1.5);
+                opacity: 0;
+            }
+        }
+
+        /* 主容器 */
+        .main-container {
+            position: relative;
+            z-index: 1;
+            max-width: 1300px;
+            margin: 0 auto;
+            padding: 24px 20px 60px;
+        }
+
+        /* 头部 */
+        .header {
+            text-align: center;
+            margin-bottom: 12px;
+        }
+        .header .badge {
+            display: inline-block;
+            background: var(--tag-bg);
+            color: var(--accent);
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 5px 14px;
+            border-radius: 20px;
+            letter-spacing: 0.08em;
+            border: 1px solid #f59e0b33;
+            margin-bottom: 10px;
+        }
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            background: linear-gradient(135deg, #fbbf24, #f59e0b, #d97706);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 6px;
+        }
+        .header .subtitle {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            letter-spacing: 0.04em;
+        }
+        .header .divider {
+            width: 80px;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            margin: 12px auto 0;
+            border-radius: 2px;
+        }
+
+        /* Tab导航 */
+        .tab-nav {
+            display: flex;
+            gap: 6px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            position: sticky;
+            top: 12px;
+            z-index: 10;
+            padding: 8px 0;
+            background: #0a0e17cc;
+            backdrop-filter: blur(12px);
+            border-radius: 16px;
+            border: 1px solid #2a334544;
+        }
+        .tab-btn {
+            padding: 10px 18px;
+            border-radius: 12px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            transition: all 0.25s ease;
+            white-space: nowrap;
+            font-family: inherit;
+            position: relative;
+        }
+        .tab-btn:hover {
+            background: var(--tab-hover-bg);
+            color: #fff;
+            border-color: #3b82f644;
+        }
+        .tab-btn.active {
+            background: var(--tab-active-bg);
+            color: #fff;
+            border-color: var(--accent);
+            box-shadow: 0 0 18px #f59e0b22, inset 0 0 0 1px #f59e0b22;
+            font-weight: 600;
+        }
+        .tab-btn .tab-icon {
+            display: block;
+            font-size: 1.4rem;
+            margin-bottom: 2px;
+        }
+        .tab-btn .tab-label {
+            font-size: 0.78rem;
+            opacity: 0.85;
+        }
+
+        /* 内容区 */
+        .content-area {
+            background: var(--panel-bg);
+            border-radius: 20px;
+            border: 1px solid var(--border);
+            padding: 28px 24px;
+            min-height: 500px;
+            box-shadow: 0 20px 50px #00000044;
+            position: relative;
+            overflow: hidden;
+        }
+        .content-area::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 20%;
+            right: 20%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #f59e0b55, transparent);
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        .scheme-panel {
+            display: none;
+            animation: fadeSlideIn 0.4s ease;
+        }
+        .scheme-panel.active {
+            display: block;
+        }
+        @keyframes fadeSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(16px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* 方案标题区 */
+        .scheme-header {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .scheme-header .scheme-icon {
+            font-size: 2.4rem;
+            width: 56px;
+            height: 56px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--tag-bg);
+            border: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .scheme-header h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            color: #fff;
+        }
+        .scheme-header .tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .scheme-header .tag {
+            font-size: 0.7rem;
+            padding: 4px 10px;
+            border-radius: 14px;
+            background: var(--tag-bg);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            letter-spacing: 0.03em;
+            white-space: nowrap;
+        }
+        .scheme-header .tag.highlight-tag {
+            border-color: #f59e0b44;
+            color: var(--highlight);
+        }
+
+        /* SVG拓扑图容器 */
+        .topo-container {
+            background: #0d1117;
+            border-radius: 16px;
+            border: 1px solid #2a3345;
+            padding: 10px;
+            margin: 14px 0;
+            overflow-x: auto;
+            position: relative;
+        }
+        .topo-container svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            min-width: 600px;
+        }
+
+        /* 数据流动图例 */
+        .flow-legend {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+            padding: 10px 14px;
+            background: #0d1117;
+            border-radius: 10px;
+            border: 1px solid #2a334555;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+        }
+        .flow-legend .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .flow-legend .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .flow-legend .legend-line {
+            width: 20px;
+            height: 2px;
+            border-radius: 1px;
+            flex-shrink: 0;
+        }
+
+        /* 特性对比卡片 */
+        .feature-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .feature-card {
+            background: #0d1117;
+            border: 1px solid #2a3345;
+            border-radius: 12px;
+            padding: 14px 16px;
+            transition: all 0.25s ease;
+        }
+        .feature-card:hover {
+            border-color: #3b82f644;
+            box-shadow: 0 0 20px #3b82f611;
+        }
+        .feature-card .fc-icon {
+            font-size: 1.3rem;
+            margin-bottom: 4px;
+        }
+        .feature-card .fc-title {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #fff;
+            letter-spacing: 0.02em;
+        }
+        .feature-card .fc-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+            line-height: 1.5;
+        }
+
+        /* 底部总结表格 */
+        .summary-table-wrap {
+            margin-top: 20px;
+            overflow-x: auto;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+        }
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            min-width: 700px;
+        }
+        .summary-table th,
+        .summary-table td {
+            padding: 11px 14px;
+            text-align: left;
+            border-bottom: 1px solid #2a334544;
+        }
+        .summary-table th {
+            background: #0d1117;
+            color: var(--accent);
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            position: sticky;
+            top: 0;
+        }
+        .summary-table td {
+            color: var(--text-secondary);
+            vertical-align: top;
+        }
+        .summary-table tr:hover td {
+            background: #1a1f2e44;
+        }
+        .summary-table .val-high {
+            color: #fbbf24;
+            font-weight: 500;
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.4rem;
+            }
+            .tab-btn {
+                padding: 8px 12px;
+                font-size: 0.75rem;
+                border-radius: 10px;
+            }
+            .tab-btn .tab-icon {
+                font-size: 1.1rem;
+            }
+            .tab-btn .tab-label {
+                font-size: 0.68rem;
+            }
+            .content-area {
+                padding: 16px 10px;
+            }
+            .scheme-header h2 {
+                font-size: 1.2rem;
+            }
+            .topo-container svg {
+                min-width: 480px;
+            }
+            .feature-cards {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+        @media (max-width: 480px) {
+            .feature-cards {
+                grid-template-columns: 1fr;
+            }
+            .tab-nav {
+                gap: 3px;
+            }
+            .tab-btn {
+                padding: 6px 8px;
+                font-size: 0.7rem;
+                border-radius: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 背景粒子 -->
+    <div class="bg-particles" id="bgParticles"></div>
+
+    <!-- 主容器 -->
+    <div class="main-container">
+        <!-- 头部 -->
+        <div class="header">
+            <div class="badge">🔴 Redis 7 · 集群架构深度解析</div>
+            <h1>集群方案 · 节点关系与数据流动</h1>
+            <p class="subtitle">拓扑关系 &amp; 数据流动方向 · 四种方案对比</p>
+            <div class="divider"></div>
+        </div>
+
+        <!-- Tab导航 -->
+        <div class="tab-nav" id="tabNav">
+            <button class="tab-btn active" data-scheme="replication">
+                <span class="tab-icon">📡</span>
+                <span class="tab-label">主从复制</span>
+            </button>
+            <button class="tab-btn" data-scheme="sentinel">
+                <span class="tab-icon">🛡️</span>
+                <span class="tab-label">哨兵模式</span>
+            </button>
+            <button class="tab-btn" data-scheme="cluster">
+                <span class="tab-icon">🕸️</span>
+                <span class="tab-label">Redis Cluster</span>
+            </button>
+            <button class="tab-btn" data-scheme="proxy">
+                <span class="tab-icon">🔀</span>
+                <span class="tab-label">代理分片</span>
+            </button>
+        </div>
+
+        <!-- 内容区 -->
+        <div class="content-area" id="contentArea">
+            <!-- 方案1：主从复制 -->
+            <div class="scheme-panel active" id="panel-replication">
+                <div class="scheme-header">
+                    <div class="scheme-icon">📡</div>
+                    <div>
+                        <h2>主从复制 · Master-Slave Replication</h2>
+                        <div class="tags">
+                            <span class="tag">一主多从</span>
+                            <span class="tag">异步复制</span>
+                            <span class="tag highlight-tag">读写分离</span>
+                            <span class="tag">手动故障转移</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="topo-container">
+                    <svg viewBox="0 0 750 400" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <marker id="arrowWrite1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#f87171"/>
+                            </marker>
+                            <marker id="arrowRepl1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#60a5fa"/>
+                            </marker>
+                            <marker id="arrowRead1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#34d399"/>
+                            </marker>
+                            <radialGradient id="masterGlow1" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#ef4444" stop-opacity="0.7"/>
+                                <stop offset="100%" stop-color="#ef4444" stop-opacity="0"/>
+                            </radialGradient>
+                            <radialGradient id="slaveGlow1" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.6"/>
+                                <stop offset="100%" stop-color="#3b82f6" stop-opacity="0"/>
+                            </radialGradient>
+                            <filter id="glowFilter1">
+                                <feGaussianBlur stdDeviation="4" result="blur"/>
+                                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+                            </filter>
+                        </defs>
+                        <!-- Master节点 -->
+                        <circle cx="375" cy="100" r="44" fill="url(#masterGlow1)" opacity="0.5"/>
+                        <circle cx="375" cy="100" r="32" fill="#1a1f2e" stroke="#ef4444" stroke-width="3" filter="url(#glowFilter1)"/>
+                        <text x="375" y="95" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Master</text>
+                        <text x="375" y="113" text-anchor="middle" fill="#f87171" font-size="10">读写节点</text>
+                        <!-- Slave节点 -->
+                        <circle cx="180" cy="280" r="44" fill="url(#slaveGlow1)" opacity="0.4"/>
+                        <circle cx="180" cy="280" r="32" fill="#1a1f2e" stroke="#3b82f6" stroke-width="3"/>
+                        <text x="180" y="275" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Slave-1</text>
+                        <text x="180" y="293" text-anchor="middle" fill="#60a5fa" font-size="9">只读</text>
+                        <circle cx="375" cy="310" r="44" fill="url(#slaveGlow1)" opacity="0.4"/>
+                        <circle cx="375" cy="310" r="32" fill="#1a1f2e" stroke="#3b82f6" stroke-width="3"/>
+                        <text x="375" y="305" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Slave-2</text>
+                        <text x="375" y="323" text-anchor="middle" fill="#60a5fa" font-size="9">只读</text>
+                        <circle cx="570" cy="280" r="44" fill="url(#slaveGlow1)" opacity="0.4"/>
+                        <circle cx="570" cy="280" r="32" fill="#1a1f2e" stroke="#3b82f6" stroke-width="3"/>
+                        <text x="570" y="275" text-anchor="middle" fill="#fff" font-size="12" font-weight="600">Slave-3</text>
+                        <text x="570" y="293" text-anchor="middle" fill="#60a5fa" font-size="9">只读</text>
+                        <!-- 客户端 -->
+                        <rect x="315" y="10" width="120" height="38" rx="19" fill="#1a1f2e" stroke="#6b7280" stroke-width="2"/>
+                        <text x="375" y="34" text-anchor="middle" fill="#9ca3af" font-size="12" font-weight="600">👤 客户端</text>
+                        <!-- 写入流：客户端→Master -->
+                        <line x1="375" y1="48" x2="375" y2="64" stroke="#f87171" stroke-width="3" marker-end="url(#arrowWrite1)" stroke-dasharray="8,4">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-24" dur="0.8s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="395" y="58" fill="#f87171" font-size="9">写入</text>
+                        <!-- 复制流：Master→Slave -->
+                        <line x1="345" y1="130" x2="205" y2="248" stroke="#60a5fa" stroke-width="2.5" marker-end="url(#arrowRepl1)" stroke-dasharray="10,6">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-32" dur="1.4s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="375" y1="136" x2="375" y2="274" stroke="#60a5fa" stroke-width="2.5" marker-end="url(#arrowRepl1)" stroke-dasharray="10,6">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-32" dur="1.4s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="405" y1="130" x2="545" y2="248" stroke="#60a5fa" stroke-width="2.5" marker-end="url(#arrowRepl1)" stroke-dasharray="10,6">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-32" dur="1.4s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="260" y="195" fill="#60a5fa" font-size="9">数据复制(异步)</text>
+                        <!-- 读取流：Slave→客户端(示意) -->
+                        <line x1="200" y1="240" x2="330" y2="55" stroke="#34d399" stroke-width="1.8" stroke-dasharray="6,5" opacity="0.7">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-22" dur="2s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="225" y="155" fill="#34d399" font-size="9">读取(可分流)</text>
+                        <!-- 数据流动粒子 -->
+                        <circle r="5" fill="#f87171" opacity="0.9">
+                            <animateMotion dur="1.5s" repeatCount="indefinite" path="M375,55 L375,80"/>
+                        </circle>
+                        <circle r="4" fill="#60a5fa" opacity="0.8">
+                            <animateMotion dur="2s" repeatCount="indefinite" path="M360,140 L280,230"/>
+                        </circle>
+                        <circle r="4" fill="#60a5fa" opacity="0.8">
+                            <animateMotion dur="2.2s" repeatCount="indefinite" begin="0.7s" path="M375,145 L375,270"/>
+                        </circle>
+                        <circle r="4" fill="#60a5fa" opacity="0.8">
+                            <animateMotion dur="2s" repeatCount="indefinite" begin="1.1s" path="M390,140 L550,240"/>
+                        </circle>
+                    </svg>
+                </div>
+                <div class="flow-legend">
+                    <span class="legend-item"><span class="legend-line" style="background:#f87171;"></span> 写入流 (客户端→Master)</span>
+                    <span class="legend-item"><span class="legend-line" style="background:#60a5fa;"></span> 复制流 (Master→Slave, 异步)</span>
+                    <span class="legend-item"><span class="legend-line" style="background:#34d399;"></span> 读取流 (可分流至Slave)</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#ef4444;"></span> Master</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span> Slave</span>
+                </div>
+                <div class="feature-cards">
+                    <div class="feature-card">
+                        <div class="fc-icon">🔴</div>
+                        <div class="fc-title">单点写入</div>
+                        <div class="fc-desc">所有写操作必须发送到Master，Master是唯一写入入口</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">🔵</div>
+                        <div class="fc-title">异步复制</div>
+                        <div class="fc-desc">Master将数据异步同步给Slave，存在数据延迟窗口</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">📖</div>
+                        <div class="fc-title">读写分离</div>
+                        <div class="fc-desc">读请求可分发到Slave，减轻Master读压力</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">⚠️</div>
+                        <div class="fc-title">手动切换</div>
+                        <div class="fc-desc">Master故障需手动将Slave提升为Master，无自动故障转移</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 方案2：哨兵模式 -->
+            <div class="scheme-panel" id="panel-sentinel">
+                <div class="scheme-header">
+                    <div class="scheme-icon">🛡️</div>
+                    <div>
+                        <h2>哨兵模式 · Sentinel</h2>
+                        <div class="tags">
+                            <span class="tag">自动故障转移</span>
+                            <span class="tag highlight-tag">高可用HA</span>
+                            <span class="tag">Sentinel集群</span>
+                            <span class="tag">主从监控</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="topo-container">
+                    <svg viewBox="0 0 750 420" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <marker id="arrowSentinelMonitor" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+                                <polygon points="0 0, 7 2.5, 0 5" fill="#f59e0b"/>
+                            </marker>
+                            <marker id="arrowSentinelRepl" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#60a5fa"/>
+                            </marker>
+                            <marker id="arrowSentinelWrite" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#f87171"/>
+                            </marker>
+                            <filter id="glowSentinel"><feGaussianBlur stdDeviation="3"/></filter>
+                            <radialGradient id="sentGlow" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.5"/>
+                                <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+                            </radialGradient>
+                        </defs>
+                        <!-- Sentinel节点 -->
+                        <circle cx="110" cy="80" r="36" fill="url(#sentGlow)" opacity="0.5"/>
+                        <circle cx="110" cy="80" r="26" fill="#1a1f2e" stroke="#f59e0b" stroke-width="2.5" filter="url(#glowSentinel)"/>
+                        <text x="110" y="76" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Sentinel-1</text>
+                        <text x="110" y="91" text-anchor="middle" fill="#fbbf24" font-size="8">监控&amp;选举</text>
+                        <circle cx="110" cy="200" r="36" fill="url(#sentGlow)" opacity="0.5"/>
+                        <circle cx="110" cy="200" r="26" fill="#1a1f2e" stroke="#f59e0b" stroke-width="2.5"/>
+                        <text x="110" y="196" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Sentinel-2</text>
+                        <text x="110" y="211" text-anchor="middle" fill="#fbbf24" font-size="8">监控&amp;选举</text>
+                        <circle cx="110" cy="320" r="36" fill="url(#sentGlow)" opacity="0.5"/>
+                        <circle cx="110" cy="320" r="26" fill="#1a1f2e" stroke="#f59e0b" stroke-width="2.5"/>
+                        <text x="110" y="316" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Sentinel-3</text>
+                        <text x="110" y="331" text-anchor="middle" fill="#fbbf24" font-size="8">监控&amp;选举</text>
+                        <!-- Sentinel之间互相通信 -->
+                        <line x1="130" y1="100" x2="130" y2="180" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,5" opacity="0.6">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="130" y1="220" x2="130" y2="300" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,5" opacity="0.6">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.5s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="145" y="150" fill="#f59e0b" font-size="8" opacity="0.8">Gossip</text>
+                        <!-- Master节点 -->
+                        <circle cx="420" cy="120" r="40" fill="#ef444422" opacity="0.5"/>
+                        <circle cx="420" cy="120" r="28" fill="#1a1f2e" stroke="#ef4444" stroke-width="3" filter="url(#glowFilter1)"/>
+                        <text x="420" y="116" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Master</text>
+                        <text x="420" y="133" text-anchor="middle" fill="#f87171" font-size="9">读写</text>
+                        <!-- Slave节点 -->
+                        <circle cx="560" cy="240" r="36" fill="#3b82f644" opacity="0.4"/>
+                        <circle cx="560" cy="240" r="26" fill="#1a1f2e" stroke="#3b82f6" stroke-width="2.5"/>
+                        <text x="560" y="236" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Slave-1</text>
+                        <text x="560" y="252" text-anchor="middle" fill="#60a5fa" font-size="8">只读</text>
+                        <circle cx="420" cy="300" r="36" fill="#3b82f644" opacity="0.4"/>
+                        <circle cx="420" cy="300" r="26" fill="#1a1f2e" stroke="#3b82f6" stroke-width="2.5"/>
+                        <text x="420" y="296" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Slave-2</text>
+                        <text x="420" y="312" text-anchor="middle" fill="#60a5fa" font-size="8">只读</text>
+                        <!-- Sentinel→Master监控 -->
+                        <line x1="140" y1="85" x2="388" y2="115" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowSentinelMonitor)" stroke-dasharray="8,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.2s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="140" y1="200" x2="388" y2="130" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowSentinelMonitor)" stroke-dasharray="8,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.2s" repeatCount="indefinite" begin="0.4s"/>
+                        </line>
+                        <line x1="140" y1="315" x2="388" y2="140" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowSentinelMonitor)" stroke-dasharray="8,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.2s" repeatCount="indefinite" begin="0.8s"/>
+                        </line>
+                        <!-- Sentinel→Slave监控 -->
+                        <line x1="140" y1="210" x2="530" y2="235" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.7">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.6s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="140" y1="325" x2="390" y2="300" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="6,4" opacity="0.7">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1.6s" repeatCount="indefinite" begin="0.5s"/>
+                        </line>
+                        <!-- 复制流 -->
+                        <line x1="445" y1="148" x2="545" y2="215" stroke="#60a5fa" stroke-width="2.2" marker-end="url(#arrowSentinelRepl)" stroke-dasharray="9,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-28" dur="1.3s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="430" y1="152" x2="425" y2="270" stroke="#60a5fa" stroke-width="2.2" marker-end="url(#arrowSentinelRepl)" stroke-dasharray="9,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-28" dur="1.3s" repeatCount="indefinite" begin="0.6s"/>
+                        </line>
+                        <!-- 客户端→Sentinel获取Master地址 -->
+                        <rect x="580" y="50" width="110" height="34" rx="17" fill="#1a1f2e" stroke="#6b7280" stroke-width="1.8"/>
+                        <text x="635" y="72" text-anchor="middle" fill="#9ca3af" font-size="11" font-weight="600">👤 客户端</text>
+                        <line x1="600" y1="84" x2="440" y2="110" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="5,5" opacity="0.6">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="2s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="500" y="80" fill="#fbbf24" font-size="8">①查询Master地址</text>
+                        <line x1="620" y1="84" x2="470" y2="118" stroke="#f87171" stroke-width="2" marker-end="url(#arrowSentinelWrite)">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="1s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="540" y="100" fill="#f87171" font-size="8">②写入Master</text>
+                    </svg>
+                </div>
+                <div class="flow-legend">
+                    <span class="legend-item"><span class="legend-line" style="background:#f59e0b;"></span> 监控&amp;选举流</span>
+                    <span class="legend-item"><span class="legend-line" style="background:#60a5fa;"></span> 数据复制流</span>
+                    <span class="legend-item"><span class="legend-line" style="background:#f87171;"></span> 客户端写入流</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span> Sentinel</span>
+                </div>
+                <div class="feature-cards">
+                    <div class="feature-card">
+                        <div class="fc-icon">🔄</div>
+                        <div class="fc-title">自动故障转移</div>
+                        <div class="fc-desc">Sentinel检测到Master不可达，自动选举新Master并通知客户端</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">🗳️</div>
+                        <div class="fc-title">多数派选举</div>
+                        <div class="fc-desc">至少3个Sentinel节点，过半同意才执行故障转移，防止脑裂</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">📢</div>
+                        <div class="fc-title">发布订阅通知</div>
+                        <div class="fc-desc">客户端订阅Sentinel频道，实时感知Master地址变更</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">⚠️</div>
+                        <div class="fc-title">无数据分片</div>
+                        <div class="fc-desc">仅解决高可用，不解决数据分片；所有数据仍在一个Master上</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 方案3：Redis Cluster -->
+            <div class="scheme-panel" id="panel-cluster">
+                <div class="scheme-header">
+                    <div class="scheme-icon">🕸️</div>
+                    <div>
+                        <h2>Redis Cluster · 官方集群方案</h2>
+                        <div class="tags">
+                            <span class="tag highlight-tag">去中心化</span>
+                            <span class="tag">16384 Slot</span>
+                            <span class="tag">Gossip协议</span>
+                            <span class="tag">自动分片</span>
+                            <span class="tag">内置高可用</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="topo-container">
+                    <svg viewBox="0 0 750 440" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <marker id="arrowGossip" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+                                <polygon points="0 0, 7 2.5, 0 5" fill="#c084fc"/>
+                            </marker>
+                            <marker id="arrowClusterRepl" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+                                <polygon points="0 0, 7 2.5, 0 5" fill="#60a5fa"/>
+                            </marker>
+                            <marker id="arrowClusterRedirect" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#fb923c"/>
+                            </marker>
+                            <filter id="glowMaster"><feGaussianBlur stdDeviation="4"/></filter>
+                        </defs>
+                        <!-- Master M1 (slot 0-5460) -->
+                        <circle cx="200" cy="100" r="44" fill="#ef444422"/>
+                        <circle cx="200" cy="100" r="32" fill="#1a1f2e" stroke="#ef4444" stroke-width="3" filter="url(#glowMaster)"/>
+                        <text x="200" y="95" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Master-A</text>
+                        <text x="200" y="113" text-anchor="middle" fill="#fb923c" font-size="9">Slot 0-5460</text>
+                        <!-- Master M2 (slot 5461-10922) -->
+                        <circle cx="500" cy="100" r="44" fill="#ef444422"/>
+                        <circle cx="500" cy="100" r="32" fill="#1a1f2e" stroke="#ef4444" stroke-width="3" filter="url(#glowMaster)"/>
+                        <text x="500" y="95" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Master-B</text>
+                        <text x="500" y="113" text-anchor="middle" fill="#fb923c" font-size="9">Slot 5461-10922</text>
+                        <!-- Master M3 (slot 10923-16383) -->
+                        <circle cx="350" cy="240" r="44" fill="#ef444422"/>
+                        <circle cx="350" cy="240" r="32" fill="#1a1f2e" stroke="#ef4444" stroke-width="3" filter="url(#glowMaster)"/>
+                        <text x="350" y="235" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Master-C</text>
+                        <text x="350" y="253" text-anchor="middle" fill="#fb923c" font-size="9">Slot 10923-16383</text>
+                        <!-- Slave节点 -->
+                        <circle cx="130" cy="310" r="34" fill="#3b82f644"/>
+                        <circle cx="130" cy="310" r="24" fill="#1a1f2e" stroke="#3b82f6" stroke-width="2.5"/>
+                        <text x="130" y="306" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Slave-A</text>
+                        <text x="130" y="322" text-anchor="middle" fill="#60a5fa" font-size="8">M-A备份</text>
+                        <circle cx="570" cy="310" r="34" fill="#3b82f644"/>
+                        <circle cx="570" cy="310" r="24" fill="#1a1f2e" stroke="#3b82f6" stroke-width="2.5"/>
+                        <text x="570" y="306" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Slave-B</text>
+                        <text x="570" y="322" text-anchor="middle" fill="#60a5fa" font-size="8">M-B备份</text>
+                        <circle cx="350" cy="370" r="34" fill="#3b82f644"/>
+                        <circle cx="350" cy="370" r="24" fill="#1a1f2e" stroke="#3b82f6" stroke-width="2.5"/>
+                        <text x="350" y="366" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Slave-C</text>
+                        <text x="350" y="382" text-anchor="middle" fill="#60a5fa" font-size="8">M-C备份</text>
+                        <!-- Gossip 通信 (Master之间双向) -->
+                        <line x1="230" y1="110" x2="468" y2="108" stroke="#c084fc" stroke-width="2" stroke-dasharray="7,6" marker-end="url(#arrowGossip)" opacity="0.8">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.5s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="468" y1="115" x2="230" y2="115" stroke="#c084fc" stroke-width="1.5" stroke-dasharray="7,6" opacity="0.5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.5s" repeatCount="indefinite" begin="0.75s"/>
+                        </line>
+                        <line x1="230" y1="125" x2="320" y2="215" stroke="#c084fc" stroke-width="2" stroke-dasharray="7,6" marker-end="url(#arrowGossip)" opacity="0.8">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.6s" repeatCount="indefinite" begin="0.3s"/>
+                        </line>
+                        <line x1="380" y1="220" x2="470" y2="125" stroke="#c084fc" stroke-width="2" stroke-dasharray="7,6" marker-end="url(#arrowGossip)" opacity="0.8">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.6s" repeatCount="indefinite" begin="0.9s"/>
+                        </line>
+                        <text x="340" y="85" fill="#c084fc" font-size="9" font-weight="600">Gossip协议</text>
+                        <!-- 主从复制 -->
+                        <line x1="190" y1="135" x2="140" y2="283" stroke="#60a5fa" stroke-width="2.2" marker-end="url(#arrowClusterRepl)" stroke-dasharray="8,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.3s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="510" y1="135" x2="560" y2="283" stroke="#60a5fa" stroke-width="2.2" marker-end="url(#arrowClusterRepl)" stroke-dasharray="8,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.3s" repeatCount="indefinite" begin="0.5s"/>
+                        </line>
+                        <line x1="350" y1="275" x2="350" y2="343" stroke="#60a5fa" stroke-width="2.2" marker-end="url(#arrowClusterRepl)" stroke-dasharray="8,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.3s" repeatCount="indefinite" begin="0.8s"/>
+                        </line>
+                        <!-- 客户端 & 重定向 -->
+                        <rect x="50" y="20" width="100" height="34" rx="17" fill="#1a1f2e" stroke="#6b7280" stroke-width="1.8"/>
+                        <text x="100" y="42" text-anchor="middle" fill="#9ca3af" font-size="11" font-weight="600">👤 客户端</text>
+                        <line x1="120" y1="40" x2="175" y2="80" stroke="#fb923c" stroke-width="2" marker-end="url(#arrowClusterRedirect)" stroke-dasharray="6,4">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-20" dur="1s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="140" y="60" fill="#fb923c" font-size="8">请求</text>
+                        <text x="240" y="60" fill="#fb923c" font-size="8" opacity="0.8">← MOVED重定向</text>
+                        <!-- 重定向示意 -->
+                        <path d="M195,75 Q280,30 470,80" fill="none" stroke="#fb923c" stroke-width="1.5" stroke-dasharray="6,5" opacity="0.6">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-22" dur="1.8s" repeatCount="indefinite"/>
+                        </path>
+                    </svg>
+                </div>
+                <div class="flow-legend">
+                    <span class="legend-item"><span class="legend-line" style="background:#c084fc;"></span> Gossip协议(节点间元数据同步)</span>
+                    <span class="legend-item"><span class="legend-line" style="background:#60a5fa;"></span> 主从复制流</span>
+                    <span class="legend-item"><span class="legend-line" style="background:#fb923c;"></span> 客户端请求&amp;MOVED重定向</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#ef4444;"></span> Master(分片)</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span> Slave(副本)</span>
+                </div>
+                <div class="feature-cards">
+                    <div class="feature-card">
+                        <div class="fc-icon">🧩</div>
+                        <div class="fc-title">16384个Slot</div>
+                        <div class="fc-desc">数据按CRC16(key)%16384分配到Slot，Slot均匀分布在各Master</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">🕸️</div>
+                        <div class="fc-title">去中心化Gossip</div>
+                        <div class="fc-desc">所有节点通过Gossip协议交换集群状态、节点信息、Slot分配</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">↩️</div>
+                        <div class="fc-title">MOVED/ASK重定向</div>
+                        <div class="fc-desc">客户端请求错误节点时收到MOVED重定向，智能客户端缓存Slot映射</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">🛡️</div>
+                        <div class="fc-title">内置故障转移</div>
+                        <div class="fc-desc">Master故障时，其Slave自动发起选举，经多数Master确认后提升</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 方案4：代理分片 -->
+            <div class="scheme-panel" id="panel-proxy">
+                <div class="scheme-header">
+                    <div class="scheme-icon">🔀</div>
+                    <div>
+                        <h2>代理分片 · Proxy-Based Sharding</h2>
+                        <div class="tags">
+                            <span class="tag">中心化代理</span>
+                            <span class="tag">Twemproxy/Codis</span>
+                            <span class="tag highlight-tag">客户端无感</span>
+                            <span class="tag">水平扩展</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="topo-container">
+                    <svg viewBox="0 0 750 400" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <marker id="arrowProxyRoute" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                                <polygon points="0 0, 8 3, 0 6" fill="#8b5cf6"/>
+                            </marker>
+                            <marker id="arrowProxyRepl" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+                                <polygon points="0 0, 7 2.5, 0 5" fill="#60a5fa"/>
+                            </marker>
+                            <filter id="glowProxy"><feGaussianBlur stdDeviation="5"/></filter>
+                            <radialGradient id="proxyGlowGrad" cx="50%" cy="50%" r="50%">
+                                <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.6"/>
+                                <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
+                            </radialGradient>
+                        </defs>
+                        <!-- Proxy节点 -->
+                        <circle cx="375" cy="130" r="50" fill="url(#proxyGlowGrad)" opacity="0.5"/>
+                        <circle cx="375" cy="130" r="36" fill="#1a1f2e" stroke="#8b5cf6" stroke-width="3.5" filter="url(#glowProxy)"/>
+                        <text x="375" y="124" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Proxy</text>
+                        <text x="375" y="143" text-anchor="middle" fill="#c4b5fd" font-size="9">路由&amp;分片</text>
+                        <!-- 后端Redis节点(主从对) -->
+                        <rect x="50" y="260" width="140" height="60" rx="10" fill="#1a1f2e" stroke="#ef4444" stroke-width="2"/>
+                        <text x="120" y="285" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Redis-A (主)</text>
+                        <text x="120" y="305" text-anchor="middle" fill="#f87171" font-size="9">分片0-5460</text>
+                        <rect x="220" y="260" width="140" height="60" rx="10" fill="#1a1f2e" stroke="#ef4444" stroke-width="2"/>
+                        <text x="290" y="285" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Redis-B (主)</text>
+                        <text x="290" y="305" text-anchor="middle" fill="#f87171" font-size="9">分片5461-10922</text>
+                        <rect x="390" y="260" width="140" height="60" rx="10" fill="#1a1f2e" stroke="#ef4444" stroke-width="2"/>
+                        <text x="460" y="285" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Redis-C (主)</text>
+                        <text x="460" y="305" text-anchor="middle" fill="#f87171" font-size="9">分片10923-16383</text>
+                        <rect x="560" y="260" width="140" height="60" rx="10" fill="#1a1f2e" stroke="#ef4444" stroke-width="2"/>
+                        <text x="630" y="285" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Redis-D (主)</text>
+                        <text x="630" y="305" text-anchor="middle" fill="#f87171" font-size="9">额外分片</text>
+                        <!-- 从节点示意 -->
+                        <rect x="65" y="340" width="110" height="36" rx="8" fill="#1a1f2e" stroke="#3b82f6" stroke-width="1.5"/>
+                        <text x="120" y="362" text-anchor="middle" fill="#60a5fa" font-size="9">Slave-A</text>
+                        <rect x="235" y="340" width="110" height="36" rx="8" fill="#1a1f2e" stroke="#3b82f6" stroke-width="1.5"/>
+                        <text x="290" y="362" text-anchor="middle" fill="#60a5fa" font-size="9">Slave-B</text>
+                        <rect x="405" y="340" width="110" height="36" rx="8" fill="#1a1f2e" stroke="#3b82f6" stroke-width="1.5"/>
+                        <text x="460" y="362" text-anchor="middle" fill="#60a5fa" font-size="9">Slave-C</text>
+                        <rect x="575" y="340" width="110" height="36" rx="8" fill="#1a1f2e" stroke="#3b82f6" stroke-width="1.5"/>
+                        <text x="630" y="362" text-anchor="middle" fill="#60a5fa" font-size="9">Slave-D</text>
+                        <!-- 客户端→Proxy -->
+                        <rect x="295" y="20" width="160" height="36" rx="18" fill="#1a1f2e" stroke="#6b7280" stroke-width="2"/>
+                        <text x="375" y="43" text-anchor="middle" fill="#9ca3af" font-size="12" font-weight="600">👤 多客户端</text>
+                        <line x1="375" y1="56" x2="375" y2="90" stroke="#8b5cf6" stroke-width="3" marker-end="url(#arrowProxyRoute)" stroke-dasharray="8,4">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-24" dur="0.7s" repeatCount="indefinite"/>
+                        </line>
+                        <text x="395" y="78" fill="#8b5cf6" font-size="9">请求</text>
+                        <!-- Proxy→后端Redis (路由分发) -->
+                        <line x1="350" y1="165" x2="130" y2="255" stroke="#8b5cf6" stroke-width="2.5" marker-end="url(#arrowProxyRoute)" stroke-dasharray="9,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-28" dur="1.2s" repeatCount="indefinite"/>
+                        </line>
+                        <line x1="370" y1="168" x2="290" y2="255" stroke="#8b5cf6" stroke-width="2.5" marker-end="url(#arrowProxyRoute)" stroke-dasharray="9,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-28" dur="1.2s" repeatCount="indefinite" begin="0.3s"/>
+                        </line>
+                        <line x1="380" y1="168" x2="450" y2="255" stroke="#8b5cf6" stroke-width="2.5" marker-end="url(#arrowProxyRoute)" stroke-dasharray="9,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-28" dur="1.2s" repeatCount="indefinite" begin="0.6s"/>
+                        </line>
+                        <line x1="400" y1="165" x2="610" y2="255" stroke="#8b5cf6" stroke-width="2.5" marker-end="url(#arrowProxyRoute)" stroke-dasharray="9,5">
+                            <animate attributeName="stroke-dashoffset" from="0" to="-28" dur="1.2s" repeatCount="indefinite" begin="0.9s"/>
+                        </line>
+                        <text x="230" y="210" fill="#c4b5fd" font-size="9">路由分发(一致性哈希/取模)</text>
+                        <!-- 主从复制 -->
+                        <line x1="120" y1="322" x2="120" y2="337" stroke="#60a5fa" stroke-width="1.8" marker-end="url(#arrowProxyRepl)" stroke-dasharray="5,4"/>
+                        <line x1="290" y1="322" x2="290" y2="337" stroke="#60a5fa" stroke-width="1.8" marker-end="url(#arrowProxyRepl)" stroke-dasharray="5,4"/>
+                        <line x1="460" y1="322" x2="460" y2="337" stroke="#60a5fa" stroke-width="1.8" marker-end="url(#arrowProxyRepl)" stroke-dasharray="5,4"/>
+                        <line x1="630" y1="322" x2="630" y2="337" stroke="#60a5fa" stroke-width="1.8" marker-end="url(#arrowProxyRepl)" stroke-dasharray="5,4"/>
+                        <!-- 数据流动粒子 -->
+                        <circle r="4" fill="#8b5cf6" opacity="0.85">
+                            <animateMotion dur="1.8s" repeatCount="indefinite" path="M360,140 L180,250"/>
+                        </circle>
+                        <circle r="4" fill="#8b5cf6" opacity="0.85">
+                            <animateMotion dur="1.8s" repeatCount="indefinite" begin="0.6s" path="M385,145 L450,250"/>
+                        </circle>
+                        <circle r="4" fill="#8b5cf6" opacity="0.85">
+                            <animateMotion dur="1.8s" repeatCount="indefinite" begin="1.1s" path="M395,145 L600,250"/>
+                        </circle>
+                    </svg>
+                </div>
+                <div class="flow-legend">
+                    <span class="legend-item"><span class="legend-line" style="background:#8b5cf6;"></span> 路由分发流(Proxy→后端)</span>
+                    <span class="legend-item"><span class="legend-line" style="background:#60a5fa;"></span> 主从复制流</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#8b5cf6;"></span> Proxy代理</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#ef4444;"></span> Redis主节点</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span> Redis从节点</span>
+                </div>
+                <div class="feature-cards">
+                    <div class="feature-card">
+                        <div class="fc-icon">🎯</div>
+                        <div class="fc-title">客户端无感分片</div>
+                        <div class="fc-desc">客户端只需连接Proxy，分片逻辑完全由代理层处理</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">⚖️</div>
+                        <div class="fc-title">灵活路由策略</div>
+                        <div class="fc-desc">支持一致性哈希、取模、范围分片等多种路由算法</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">⚠️</div>
+                        <div class="fc-title">Proxy单点瓶颈</div>
+                        <div class="fc-desc">代理层成为性能瓶颈和单点故障风险，需部署多个Proxy</div>
+                    </div>
+                    <div class="feature-card">
+                        <div class="fc-icon">📦</div>
+                        <div class="fc-title">后端独立部署</div>
+                        <div class="fc-desc">每个Redis实例独立运行，可单独做主从或哨兵配置</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 总结对比表 -->
+        <div class="summary-table-wrap">
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>对比维度</th>
+                        <th>主从复制</th>
+                        <th>哨兵模式</th>
+                        <th>Redis Cluster</th>
+                        <th>代理分片</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>拓扑结构</strong></td>
+                        <td>一主多从，星型</td>
+                        <td>主从+Sentinel集群</td>
+                        <td class="val-high">多主多从，网状Gossip</td>
+                        <td>Proxy中心化星型</td>
+                    </tr>
+                    <tr>
+                        <td><strong>数据写入流</strong></td>
+                        <td>客户端→Master</td>
+                        <td>客户端→Sentinel获取地址→Master</td>
+                        <td class="val-high">客户端→任意节点→MOVED重定向→正确Master</td>
+                        <td>客户端→Proxy→路由→后端Redis</td>
+                    </tr>
+                    <tr>
+                        <td><strong>数据复制流</strong></td>
+                        <td>Master→Slave(异步)</td>
+                        <td>Master→Slave(异步)</td>
+                        <td class="val-high">各Master→其Slave(异步)</td>
+                        <td>各主→其从(异步，可选)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>节点通信</strong></td>
+                        <td>仅主从复制连接</td>
+                        <td>Sentinel间Gossip+监控连接</td>
+                        <td class="val-high">全节点Gossip(元数据)</td>
+                        <td>Proxy→后端单向路由</td>
+                    </tr>
+                    <tr>
+                        <td><strong>数据分片</strong></td>
+                        <td>❌ 无</td>
+                        <td>❌ 无</td>
+                        <td class="val-high">✅ 16384 Slot自动分片</td>
+                        <td>✅ Proxy层分片</td>
+                    </tr>
+                    <tr>
+                        <td><strong>故障转移</strong></td>
+                        <td>❌ 手动</td>
+                        <td>✅ Sentinel自动选举</td>
+                        <td class="val-high">✅ 内置自动故障转移</td>
+                        <td>依赖后端配置</td>
+                    </tr>
+                    <tr>
+                        <td><strong>客户端复杂度</strong></td>
+                        <td>低</td>
+                        <td>中(需Sentinel感知)</td>
+                        <td class="val-high">高(需支持Cluster协议)</td>
+                        <td>低(仅连接Proxy)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>扩展方式</strong></td>
+                        <td>垂直扩展</td>
+                        <td>垂直扩展</td>
+                        <td class="val-high">水平扩展(加节点)</td>
+                        <td>水平扩展(加后端)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // 背景粒子生成
+        (function() {
+            const container = document.getElementById('bgParticles');
+            const colors = ['#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#34d399', '#60a5fa'];
+            for (let i = 0; i < 35; i++) {
+                const particle = document.createElement('div');
+                particle.classList.add('bg-particle');
+                const size = Math.random() * 3 + 1.5;
+                particle.style.width = size + 'px';
+                particle.style.height = size + 'px';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.background = colors[Math.floor(Math.random() * colors.length)];
+                particle.style.animationDuration = (Math.random() * 15 + 10) + 's';
+                particle.style.animationDelay = Math.random() * 15 + 's';
+                container.appendChild(particle);
+            }
+        })();
+
+        // Tab切换逻辑
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        const panels = document.querySelectorAll('.scheme-panel');
+        const contentArea = document.getElementById('contentArea');
+
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const scheme = this.getAttribute('data-scheme');
+                // 更新tab状态
+                tabBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                // 更新面板
+                panels.forEach(p => p.classList.remove('active'));
+                const targetPanel = document.getElementById('panel-' + scheme);
+                if (targetPanel) {
+                    targetPanel.classList.add('active');
+                    // 重新触发SVG动画（强制重绘）
+                    const svgs = targetPanel.querySelectorAll('svg');
+                    svgs.forEach(svg => {
+                        const clone = svg.cloneNode(true);
+                        svg.parentNode.replaceChild(clone, svg);
+                    });
+                }
+                // 滚动到内容区（移动端）
+                if (window.innerWidth < 768) {
+                    contentArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                // 更新URL hash
+                history.replaceState(null, null, '#' + scheme);
+            });
+        });
+
+        // 页面加载时检查URL hash
+        function loadFromHash() {
+            const hash = window.location.hash.replace('#', '');
+            if (hash && ['replication', 'sentinel', 'cluster', 'proxy'].includes(hash)) {
+                const btn = document.querySelector(`[data-scheme="${hash}"]`);
+                if (btn) btn.click();
+            }
+        }
+        loadFromHash();
+        window.addEventListener('hashchange', loadFromHash);
+
+        // 键盘导航
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                const activeBtn = document.querySelector('.tab-btn.active');
+                if (!activeBtn) return;
+                const allBtns = Array.from(tabBtns);
+                const idx = allBtns.indexOf(activeBtn);
+                let nextIdx;
+                if (e.key === 'ArrowRight') {
+                    nextIdx = (idx + 1) % allBtns.length;
+                } else {
+                    nextIdx = (idx - 1 + allBtns.length) % allBtns.length;
+                }
+                allBtns[nextIdx].click();
+            }
+        });
+
+        console.log('🔴 Redis 7 集群方案 · 节点关系深度解析 已就绪');
+        console.log('   📡 主从复制 | 🛡️ 哨兵模式 | 🕸️ Redis Cluster | 🔀 代理分片');
+        console.log('   💡 使用 ← → 方向键切换方案 | 点击Tab切换');
+    </script>
+</body>
+</html>
