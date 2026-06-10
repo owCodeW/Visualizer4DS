@@ -96,3 +96,25 @@ register_type("redis", TypeInfo(
     icon="⚠",
     color="#7c3aed",
 ))
+
+# 集群方案 (图文知识页, 无后端 API)
+register_type("redis", TypeInfo(
+    name="Cluster",
+    description="主从复制 / 哨兵 / Redis Cluster / 代理分片 四种集群方案对比",
+    encodings=["replication", "sentinel", "cluster", "proxy"],
+    page_path="/categories/redis/pages/cluster.html",
+    api_prefix="",
+    icon="🕸",
+    color="#f59e0b",
+))
+
+# 网络模型 (图文知识页, 无后端 API)
+register_type("redis", TypeInfo(
+    name="Network",
+    description="单线程 Reactor / I/O 多路复用 / I/O 线程 / 事件驱动全链路解析",
+    encodings=["reactor", "multiplexing", "iothread", "eventloop"],
+    page_path="/categories/redis/pages/network.html",
+    api_prefix="",
+    icon="🌐",
+    color="#06b6d4",
+))

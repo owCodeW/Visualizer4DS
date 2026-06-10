@@ -1,0 +1,1576 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redis 7 网络模型 · 完整架构深度解析</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        :root {
+            --bg: #0a0e17;
+            --panel-bg: #111827;
+            --card-bg: #1a1f2e;
+            --border: #2a3345;
+            --text: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #06b6d4;
+            --accent2: #3b82f6;
+            --client-color: #6b7280;
+            --ae-color: #06b6d4;
+            --ae-glow: #06b6d466;
+            --thread-color: #3b82f6;
+            --thread-glow: #3b82f666;
+            --io-color: #10b981;
+            --io-glow: #10b98166;
+            --command-color: #f59e0b;
+            --command-glow: #f59e0b66;
+            --timer-color: #8b5cf6;
+            --timer-glow: #8b5cf666;
+            --replication-color: #ef4444;
+            --replication-glow: #ef444466;
+            --tab-active-bg: #1e293b;
+            --tab-hover-bg: #1a2340;
+            --tag-bg: #1e293b;
+            --highlight: #fbbf24;
+            --flow-read: #34d399;
+            --flow-write: #f87171;
+            --flow-event: #60a5fa;
+            --flow-timer: #c084fc;
+        }
+
+        body {
+            background: var(--bg) !important;
+            color: var(--text);
+            padding: 0 !important;
+        }
+
+        .page-title {
+            background: linear-gradient(135deg, #06b6d4, #3b82f6, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: transparent;
+        }
+        .page-desc {
+            color: var(--text-secondary);
+        }
+
+        /* 主容器 */
+        .network-main-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Tab 切换栏 */
+        .network-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 24px;
+            background: var(--panel-bg);
+            border-radius: 12px;
+            padding: 6px;
+            overflow-x: auto;
+        }
+        .network-tab {
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            background: transparent;
+            border: none;
+            transition: all 0.25s ease;
+            white-space: nowrap;
+        }
+        .network-tab:hover {
+            color: var(--text);
+            background: var(--tab-hover-bg);
+        }
+        .network-tab.active {
+            color: #fff;
+            background: var(--tab-active-bg);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .network-tab .tab-icon {
+            margin-right: 6px;
+        }
+
+        /* Tab 内容面板 */
+        .tab-panel {
+            display: none;
+            animation: panelIn 0.35s ease;
+        }
+        .tab-panel.active { display: block; }
+        @keyframes panelIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* SVG 架构图区域 */
+        .arch-svg-container {
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            overflow-x: auto;
+        }
+        .arch-svg-container svg {
+            width: 100%;
+            max-width: 1100px;
+            margin: 0 auto;
+            display: block;
+        }
+
+        /* 特性卡片 */
+        .feature-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 16px;
+            margin-top: 24px;
+        }
+        .feature-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .feature-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        .feature-card-icon {
+            width: 40px; height: 40px;
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px;
+            margin-bottom: 12px;
+        }
+        .feature-card-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 8px;
+        }
+        .feature-card-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+        .feature-card code {
+            background: var(--tag-bg);
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            color: var(--accent);
+        }
+
+        /* 对比表格 */
+        .compare-table-wrap {
+            overflow-x: auto;
+            margin-top: 24px;
+        }
+        .compare-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            background: var(--panel-bg);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .compare-table th {
+            background: var(--card-bg);
+            color: var(--text);
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border);
+        }
+        .compare-table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+        .compare-table tr:last-child td { border-bottom: none; }
+        .compare-table tr:hover td { background: rgba(255,255,255,0.03); }
+        .compare-table .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        /* 流程步骤 */
+        .flow-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            margin-top: 20px;
+        }
+        .flow-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 16px 0;
+            position: relative;
+        }
+        .flow-step:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            left: 19px;
+            top: 52px;
+            bottom: -4px;
+            width: 2px;
+            background: var(--border);
+        }
+        .flow-step-num {
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700;
+            font-size: 16px;
+            flex-shrink: 0;
+            color: #fff;
+        }
+        .flow-step-content {
+            flex: 1;
+        }
+        .flow-step-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+        .flow-step-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+        .flow-step-desc code {
+            background: var(--tag-bg);
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+            color: var(--accent);
+        }
+
+        /* 代码块 */
+        .code-block {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin: 16px 0;
+            font-family: Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            color: #c9d1d9;
+            overflow-x: auto;
+            white-space: pre;
+        }
+        .code-block .kw { color: #ff7b72; }
+        .code-block .fn { color: #d2a8ff; }
+        .code-block .str { color: #a5d6ff; }
+        .code-block .cmt { color: #8b949e; }
+        .code-block .type { color: #79c0ff; }
+        .code-block .num { color: #79c0ff; }
+
+        /* 小节标题 */
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text);
+            margin: 32px 0 16px;
+            padding-left: 12px;
+            border-left: 4px solid var(--accent);
+        }
+        .section-subtitle {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text);
+            margin: 24px 0 12px;
+        }
+
+        /* 提示框 */
+        .info-box {
+            background: rgba(6, 182, 212, 0.08);
+            border: 1px solid rgba(6, 182, 212, 0.25);
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin: 16px 0;
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+        .info-box strong {
+            color: var(--accent);
+        }
+
+        /* 动画: 数据流动 */
+        @keyframes dataFlow {
+            0%   { stroke-dashoffset: 20; }
+            100% { stroke-dashoffset: 0; }
+        }
+        .flow-line {
+            stroke-dasharray: 8 4;
+            animation: dataFlow 1s linear infinite;
+        }
+
+        /* 动画: 脉冲 */
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50%      { opacity: 1; }
+        }
+        .pulse-node {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .network-main-container { padding: 12px; }
+            .feature-cards { grid-template-columns: 1fr; }
+            .network-tabs { gap: 2px; }
+            .network-tab { padding: 8px 14px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="navBar"></div>
+
+    <div class="network-main-container">
+        <h1 class="page-title">Redis 7 网络模型 · 完整架构</h1>
+        <p class="page-desc">单线程 Reactor · I/O 多路复用 · 6.0+ I/O 线程 · 事件驱动全链路深度解析</p>
+
+        <!-- Tab 导航 -->
+        <div class="network-tabs">
+            <button class="network-tab active" data-tab="overview">
+                <span class="tab-icon">🏗</span>整体架构
+            </button>
+            <button class="network-tab" data-tab="ae">
+                <span class="tab-icon">⚡</span>aeEventLoop
+            </button>
+            <button class="network-tab" data-tab="io">
+                <span class="tab-icon">🔄</span>I/O 多路复用
+            </button>
+            <button class="network-tab" data-tab="command">
+                <span class="tab-icon">📋</span>命令处理
+            </button>
+            <button class="network-tab" data-tab="iothread">
+                <span class="tab-icon">🧵</span>I/O 线程 (6.0+)
+            </button>
+            <button class="network-tab" data-tab="timer">
+                <span class="tab-icon">⏱</span>定时事件
+            </button>
+            <button class="network-tab" data-tab="epoll">
+                <span class="tab-icon">📡</span>epoll 演进
+            </button>
+        </div>
+
+        <!-- ========== Tab 1: 整体架构 ========== -->
+        <div class="tab-panel active" id="panel-overview">
+            <div class="arch-svg-container">
+                <svg viewBox="0 0 1100 620" xmlns="http://www.w3.org/2000/svg">
+                    <!-- 客户端 -->
+                    <rect x="30" y="30" width="120" height="44" rx="8" fill="#374151" stroke="#6b7280" stroke-width="1.5"/>
+                    <text x="90" y="57" text-anchor="middle" fill="#9ca3af" font-size="13" font-weight="600">Client 1</text>
+                    <rect x="30" y="86" width="120" height="44" rx="8" fill="#374151" stroke="#6b7280" stroke-width="1.5"/>
+                    <text x="90" y="113" text-anchor="middle" fill="#9ca3af" font-size="13" font-weight="600">Client 2</text>
+                    <rect x="30" y="142" width="120" height="44" rx="8" fill="#374151" stroke="#6b7280" stroke-width="1.5"/>
+                    <text x="90" y="169" text-anchor="middle" fill="#9ca3af" font-size="13" font-weight="600">Client N</text>
+                    <text x="90" y="210" text-anchor="middle" fill="#6b7280" font-size="12">... ...</text>
+
+                    <!-- 连接线: 客户端 → TCP -->
+                    <line x1="150" y1="52" x2="230" y2="130" stroke="#6b7280" stroke-width="1.2" class="flow-line"/>
+                    <line x1="150" y1="108" x2="230" y2="140" stroke="#6b7280" stroke-width="1.2" class="flow-line"/>
+                    <line x1="150" y1="164" x2="230" y2="150" stroke="#6b7280" stroke-width="1.2" class="flow-line"/>
+
+                    <!-- TCP 连接层 -->
+                    <rect x="230" y="90" width="160" height="100" rx="10" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+                    <text x="310" y="118" text-anchor="middle" fill="#60a5fa" font-size="14" font-weight="700">TCP 连接层</text>
+                    <text x="310" y="140" text-anchor="middle" fill="#94a3b8" font-size="11">anetTcpServer</text>
+                    <text x="310" y="158" text-anchor="middle" fill="#94a3b8" font-size="11">anetUnixServer</text>
+                    <text x="310" y="176" text-anchor="middle" fill="#94a3b8" font-size="11">acceptHandler</text>
+
+                    <!-- 连接线: TCP → aeEventLoop -->
+                    <line x1="390" y1="140" x2="470" y2="140" stroke="#3b82f6" stroke-width="1.5" class="flow-line"/>
+                    <polygon points="465,135 475,140 465,145" fill="#3b82f6"/>
+
+                    <!-- aeEventLoop 核心 -->
+                    <rect x="475" y="30" width="260" height="280" rx="12" fill="#111827" stroke="#06b6d4" stroke-width="2"/>
+                    <text x="605" y="58" text-anchor="middle" fill="#06b6d4" font-size="16" font-weight="700">aeEventLoop</text>
+                    <text x="605" y="78" text-anchor="middle" fill="#64748b" font-size="11">Redis 事件驱动核心</text>
+
+                    <!-- 事件循环箭头 -->
+                    <ellipse cx="605" cy="180" rx="90" ry="70" fill="none" stroke="#06b6d4" stroke-width="1" stroke-dasharray="4 3" opacity="0.4"/>
+
+                    <!-- 文件事件 -->
+                    <rect x="500" y="100" width="100" height="36" rx="6" fill="#10b981" opacity="0.15" stroke="#10b981" stroke-width="1"/>
+                    <text x="550" y="123" text-anchor="middle" fill="#34d399" font-size="12" font-weight="600">文件事件</text>
+
+                    <!-- 定时事件 -->
+                    <rect x="615" y="100" width="100" height="36" rx="6" fill="#8b5cf6" opacity="0.15" stroke="#8b5cf6" stroke-width="1"/>
+                    <text x="665" y="123" text-anchor="middle" fill="#a78bfa" font-size="12" font-weight="600">定时事件</text>
+
+                    <!-- I/O 多路复用 -->
+                    <rect x="500" y="150" width="210" height="36" rx="6" fill="#3b82f6" opacity="0.15" stroke="#3b82f6" stroke-width="1"/>
+                    <text x="605" y="173" text-anchor="middle" fill="#60a5fa" font-size="12" font-weight="600">I/O 多路复用 (epoll/kqueue)</text>
+
+                    <!-- 事件分派 -->
+                    <rect x="500" y="200" width="210" height="36" rx="6" fill="#f59e0b" opacity="0.15" stroke="#f59e0b" stroke-width="1"/>
+                    <text x="605" y="223" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="600">事件分派 → 回调处理</text>
+
+                    <!-- 循环箭头 -->
+                    <path d="M 500 180 Q 480 180 480 200 Q 480 220 500 220" fill="none" stroke="#06b6d4" stroke-width="1.2" marker-end="none"/>
+
+                    <!-- aeProcessEvents 标签 -->
+                    <text x="605" y="270" text-anchor="middle" fill="#475569" font-size="11" font-family="Consolas, monospace">aeProcessEvents()</text>
+                    <text x="605" y="290" text-anchor="middle" fill="#475569" font-size="10" font-family="Consolas, monospace">while(eventLoop->stop) { ... }</text>
+
+                    <!-- 连接线: aeEventLoop → 命令处理 -->
+                    <line x1="735" y1="140" x2="810" y2="140" stroke="#f59e0b" stroke-width="1.5" class="flow-line"/>
+                    <polygon points="805,135 815,140 805,145" fill="#f59e0b"/>
+
+                    <!-- 命令处理 -->
+                    <rect x="815" y="60" width="250" height="200" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+                    <text x="940" y="88" text-anchor="middle" fill="#fbbf24" font-size="14" font-weight="700">命令处理</text>
+
+                    <rect x="835" y="100" width="210" height="28" rx="5" fill="#f59e0b" opacity="0.1" stroke="#f59e0b" stroke-width="0.8"/>
+                    <text x="940" y="119" text-anchor="middle" fill="#fcd34d" font-size="11">readQueryFromClient()</text>
+
+                    <rect x="835" y="136" width="210" height="28" rx="5" fill="#f59e0b" opacity="0.1" stroke="#f59e0b" stroke-width="0.8"/>
+                    <text x="940" y="155" text-anchor="middle" fill="#fcd34d" font-size="11">processInputBuffer()</text>
+
+                    <rect x="835" y="172" width="210" height="28" rx="5" fill="#f59e0b" opacity="0.1" stroke="#f59e0b" stroke-width="0.8"/>
+                    <text x="940" y="191" text-anchor="middle" fill="#fcd34d" font-size="11">processCommand()</text>
+
+                    <rect x="835" y="208" width="210" height="28" rx="5" fill="#f59e0b" opacity="0.1" stroke="#f59e0b" stroke-width="0.8"/>
+                    <text x="940" y="227" text-anchor="middle" fill="#fcd34d" font-size="11">addReply() → 写缓冲</text>
+
+                    <!-- I/O 线程池 (6.0+) -->
+                    <rect x="475" y="350" width="590" height="100" rx="10" fill="#1e293b" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="6 3"/>
+                    <text x="770" y="378" text-anchor="middle" fill="#a78bfa" font-size="14" font-weight="700">I/O 线程池 (Redis 6.0+)</text>
+                    <text x="770" y="398" text-anchor="middle" fill="#94a3b8" font-size="11">io-threads / io-threads-do-reads</text>
+
+                    <rect x="510" y="410" width="100" height="28" rx="5" fill="#8b5cf6" opacity="0.15" stroke="#8b5cf6" stroke-width="0.8"/>
+                    <text x="560" y="429" text-anchor="middle" fill="#c4b5fd" font-size="11">IO Thread 1</text>
+                    <rect x="630" y="410" width="100" height="28" rx="5" fill="#8b5cf6" opacity="0.15" stroke="#8b5cf6" stroke-width="0.8"/>
+                    <text x="680" y="429" text-anchor="middle" fill="#c4b5fd" font-size="11">IO Thread 2</text>
+                    <rect x="750" y="410" width="100" height="28" rx="5" fill="#8b5cf6" opacity="0.15" stroke="#8b5cf6" stroke-width="0.8"/>
+                    <text x="800" y="429" text-anchor="middle" fill="#c4b5fd" font-size="11">IO Thread N</text>
+                    <text x="920" y="429" text-anchor="middle" fill="#64748b" font-size="12">读/写并行</text>
+
+                    <!-- 连接线: aeEventLoop → I/O 线程池 -->
+                    <line x1="605" y1="310" x2="605" y2="350" stroke="#8b5cf6" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+                    <!-- 底部: 数据结构 & 持久化 -->
+                    <rect x="30" y="500" width="510" height="90" rx="10" fill="#1e293b" stroke="#ef4444" stroke-width="1.5"/>
+                    <text x="285" y="528" text-anchor="middle" fill="#f87171" font-size="14" font-weight="700">持久化 & 复制</text>
+                    <text x="150" y="555" text-anchor="middle" fill="#94a3b8" font-size="11">RDB (fork + COW)</text>
+                    <text x="340" y="555" text-anchor="middle" fill="#94a3b8" font-size="11">AOF (write / fsync)</text>
+                    <text x="460" y="555" text-anchor="middle" fill="#94a3b8" font-size="11">Replication</text>
+                    <text x="285" y="575" text-anchor="middle" fill="#64748b" font-size="10">主线程 fork() 子进程完成 RDB; AOF 写入由主线程触发</text>
+
+                    <rect x="560" y="500" width="510" height="90" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+                    <text x="815" y="528" text-anchor="middle" fill="#34d399" font-size="14" font-weight="700">核心数据结构</text>
+                    <text x="660" y="555" text-anchor="middle" fill="#94a3b8" font-size="11">SDS / QuickList / HT</text>
+                    <text x="860" y="555" text-anchor="middle" fill="#94a3b8" font-size="11">SkipList / IntSet</text>
+                    <text x="1000" y="555" text-anchor="middle" fill="#94a3b8" font-size="11">Listpack</text>
+                    <text x="815" y="575" text-anchor="middle" fill="#64748b" font-size="10">所有数据结构操作均在主线程执行 (单线程模型)</text>
+
+                    <!-- 连接线: 命令处理 → 数据结构 -->
+                    <line x1="940" y1="260" x2="940" y2="500" stroke="#10b981" stroke-width="1.2" stroke-dasharray="4 3"/>
+                    <!-- 连接线: aeEventLoop → 持久化 -->
+                    <line x1="540" y1="310" x2="285" y2="500" stroke="#ef4444" stroke-width="1.2" stroke-dasharray="4 3"/>
+                </svg>
+            </div>
+
+            <h2 class="section-title">Redis 网络模型核心要点</h2>
+            <div class="feature-cards">
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#06b6d4;">⚡</div>
+                    <div class="feature-card-title">单线程 Reactor</div>
+                    <div class="feature-card-desc">
+                        Redis 核心采用单线程事件循环模型 <code>aeEventLoop</code>，
+                        通过 <code>aeProcessEvents()</code> 不断轮询就绪事件并分派回调。
+                        单线程避免了锁竞争，保证命令顺序执行。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#3b82f6;">🔄</div>
+                    <div class="feature-card-title">I/O 多路复用</div>
+                    <div class="feature-card-desc">
+                        使用 <code>epoll</code>(Linux) / <code>kqueue</code>(macOS) / <code>select</code>(fallback)
+                        同时监听数千个连接的读写事件，一个线程即可高效处理海量并发。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#8b5cf6;">🧵</div>
+                    <div class="feature-card-title">I/O 线程 (6.0+)</div>
+                    <div class="feature-card-desc">
+                        Redis 6.0 引入 <code>io-threads</code>，将客户端读写分摊到多个 I/O 线程并行处理，
+                        但命令执行仍在主线程，保证数据一致性。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#f59e0b;">📋</div>
+                    <div class="feature-card-title">事件驱动</div>
+                    <div class="feature-card-desc">
+                        一切皆事件：客户端连接是文件事件，<code>EXPIRE</code> 是定时事件，
+                        <code>BGREWRITEAOF</code> 由子进程通知主线程。所有逻辑由回调驱动。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#ef4444;">💾</div>
+                    <div class="feature-card-title">持久化不阻塞</div>
+                    <div class="feature-card-desc">
+                        RDB 通过 <code>fork()</code> + COW 由子进程完成；
+                        AOF 由主线程写入缓冲区，<code>fsync</code> 由后台线程完成（everysec 模式）。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#10b981;">🚀</div>
+                    <div class="feature-card-title">为什么快</div>
+                    <div class="feature-card-desc">
+                        纯内存操作 + 单线程无锁 + I/O 多路复用 + 高效数据结构 + 
+                        管道/批量操作，单机 QPS 可达 10 万+。
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== Tab 2: aeEventLoop ========== -->
+        <div class="tab-panel" id="panel-ae">
+            <h2 class="section-title">aeEventLoop 事件循环</h2>
+            <p style="color:var(--text-secondary);font-size:14px;line-height:1.8;margin-bottom:16px;">
+                <code style="background:var(--tag-bg);padding:1px 6px;border-radius:3px;font-size:12px;color:var(--accent);">aeEventLoop</code>
+                是 Redis 自己实现的轻量级事件循环库，核心数据结构包含文件事件表、定时事件链表和就绪事件队列。
+            </p>
+
+            <div class="code-block">
+<span class="cmt">// ae.h - 事件循环核心结构</span>
+<span class="kw">typedef struct</span> <span class="type">aeEventLoop</span> {
+    <span class="type">int</span> maxfd;              <span class="cmt">// 当前注册的最大 fd</span>
+    <span class="type">int</span> setsize;            <span class="cmt">// fd 集合大小 (等于 maxclients + 128)</span>
+    <span class="type">long long</span> timeEventNextId; <span class="cmt">// 下一个定时事件 ID</span>
+    <span class="type">time_t</span> lastTime;        <span class="cmt">// 上次检查定时事件的时间</span>
+    <span class="type">aeFileEvent</span> *events;   <span class="cmt">// 注册的文件事件数组 [fd] → 事件</span>
+    <span class="type">aeFiredEvent</span> *fired;   <span class="cmt">// 已触发事件数组 (epoll_wait 返回)</span>
+    <span class="type">aeTimeEvent</span> *timeEventHead; <span class="cmt">// 定时事件链表头</span>
+    <span class="type">int</span> stop;               <span class="cmt">// 停止标志</span>
+    <span class="type">void</span> *apidata;          <span class="cmt">// 平台多路复用数据 (epoll_fd 等)</span>
+    <span class="type">aeBeforeSleepProc</span> *beforesleep; <span class="cmt">// 每轮循环前回调</span>
+    <span class="type">aeBeforeSleepProc</span> *aftersleep;  <span class="cmt">// 每轮循环后回调</span>
+} <span class="type">aeEventLoop</span>;
+
+<span class="cmt">// 文件事件</span>
+<span class="kw">typedef struct</span> <span class="type">aeFileEvent</span> {
+    <span class="type">int</span> mask;               <span class="cmt">// AE_READABLE | AE_WRITABLE</span>
+    <span class="type">aeFileProc</span> *rfileProc; <span class="cmt">// 读回调</span>
+    <span class="type">aeFileProc</span> *wfileProc; <span class="cmt">// 写回调</span>
+    <span class="type">void</span> *clientData;      <span class="cmt">// 关联的 client 指针</span>
+} <span class="type">aeFileEvent</span>;
+
+<span class="cmt">// 定时事件</span>
+<span class="kw">typedef struct</span> <span class="type">aeTimeEvent</span> {
+    <span class="type">long long</span> id;          <span class="cmt">// 唯一 ID</span>
+    <span class="type">long</span> when_sec;          <span class="cmt">// 触发时间 (秒)</span>
+    <span class="type">long</span> when_ms;           <span class="cmt">// 触发时间 (毫秒)</span>
+    <span class="type">aeTimeProc</span> *timeProc;  <span class="cmt">// 回调函数</span>
+    <span class="type">aeEventFinalizerProc</span> *finalizerProc;
+    <span class="type">void</span> *clientData;
+    <span class="type">aeTimeEvent</span> *prev;     <span class="cmt">// 双向链表</span>
+    <span class="type">aeTimeEvent</span> *next;
+} <span class="type">aeTimeEvent</span>;
+            </div>
+
+            <h3 class="section-subtitle">主循环流程</h3>
+            <div class="flow-steps">
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#06b6d4;">1</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">beforesleep 回调</div>
+                        <div class="flow-step-desc">
+                            每轮循环开始前执行，处理 <code>unblockClient</code>、<code>flushAppendOnlyFile</code>、
+                            <code>handleClientsWithPendingWrites</code> 等待写数据等。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#3b82f6;">2</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">计算最近定时事件时间</div>
+                        <div class="flow-step-desc">
+                            遍历定时事件链表，找到最近要触发的定时事件，计算 <code>tvp</code>（超时值），
+                            作为 <code>epoll_wait</code> 的最大等待时间，避免定时事件延迟。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#10b981;">3</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">epoll_wait 阻塞等待</div>
+                        <div class="flow-step-desc">
+                            调用 <code>aeApiPoll()</code> → 底层 <code>epoll_wait()</code>，
+                            等待就绪的文件描述符，最多阻塞 <code>tvp</code> 时间。返回就绪 fd 数组 <code>fired[]</code>。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#f59e0b;">4</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">分派文件事件</div>
+                        <div class="flow-step-desc">
+                            遍历 <code>fired[]</code>，根据 <code>mask</code> 调用对应的 <code>rfileProc</code>（读回调）
+                            或 <code>wfileProc</code>（写回调）。如 <code>readQueryFromClient</code>、<code>sendReplyToClient</code>。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#8b5cf6;">5</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">处理定时事件</div>
+                        <div class="flow-step-desc">
+                            遍历定时事件链表，对已到期的定时事件调用 <code>timeProc</code>。
+                            如 <code>serverCron</code>（100ms 周期）处理过期 key、rehash、统计等。
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="info-box">
+                <strong>关键设计：</strong>文件事件优先级高于定时事件。先处理所有就绪的文件事件，再处理定时事件。
+                这保证了客户端请求的响应延迟最小化。
+            </div>
+        </div>
+
+        <!-- ========== Tab 3: I/O 多路复用 ========== -->
+        <div class="tab-panel" id="panel-io">
+            <h2 class="section-title">I/O 多路复用机制</h2>
+            <p style="color:var(--text-secondary);font-size:14px;line-height:1.8;margin-bottom:16px;">
+                Redis 通过抽象层 <code>aeApi</code> 封装不同平台的多路复用实现，编译时自动选择最优方案。
+            </p>
+
+            <div class="arch-svg-container">
+                <svg viewBox="0 0 1000 400" xmlns="http://www.w3.org/2000/svg">
+                    <!-- aeApi 抽象层 -->
+                    <rect x="350" y="20" width="300" height="60" rx="10" fill="#1e293b" stroke="#06b6d4" stroke-width="2"/>
+                    <text x="500" y="48" text-anchor="middle" fill="#06b6d4" font-size="16" font-weight="700">aeApi 抽象层</text>
+                    <text x="500" y="68" text-anchor="middle" fill="#64748b" font-size="11">aeApiCreate / aeApiAddEvent / aeApiPoll</text>
+
+                    <!-- 三个实现 -->
+                    <line x1="400" y1="80" x2="170" y2="150" stroke="#3b82f6" stroke-width="1.2"/>
+                    <line x1="500" y1="80" x2="500" y2="150" stroke="#10b981" stroke-width="1.2"/>
+                    <line x1="600" y1="80" x2="830" y2="150" stroke="#f59e0b" stroke-width="1.2"/>
+
+                    <!-- epoll -->
+                    <rect x="50" y="150" width="240" height="120" rx="10" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+                    <text x="170" y="178" text-anchor="middle" fill="#60a5fa" font-size="15" font-weight="700">epoll</text>
+                    <text x="170" y="198" text-anchor="middle" fill="#94a3b8" font-size="11">Linux 2.6+</text>
+                    <text x="170" y="222" text-anchor="middle" fill="#64748b" font-size="11">O(1) 事件通知</text>
+                    <text x="170" y="240" text-anchor="middle" fill="#64748b" font-size="11">epoll_create / epoll_ctl / epoll_wait</text>
+                    <rect x="80" y="252" width="60" height="18" rx="4" fill="#3b82f6" opacity="0.3"/>
+                    <text x="110" y="265" text-anchor="middle" fill="#93c5fd" font-size="10">LT</text>
+                    <rect x="150" y="252" width="60" height="18" rx="4" fill="#3b82f6" opacity="0.3"/>
+                    <text x="180" y="265" text-anchor="middle" fill="#93c5fd" font-size="10">ET</text>
+
+                    <!-- kqueue -->
+                    <rect x="380" y="150" width="240" height="120" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+                    <text x="500" y="178" text-anchor="middle" fill="#34d399" font-size="15" font-weight="700">kqueue</text>
+                    <text x="500" y="198" text-anchor="middle" fill="#94a3b8" font-size="11">macOS / FreeBSD</text>
+                    <text x="500" y="222" text-anchor="middle" fill="#64748b" font-size="11">O(1) 事件通知</text>
+                    <text x="500" y="240" text-anchor="middle" fill="#64748b" font-size="11">kqueue / kevent</text>
+
+                    <!-- select -->
+                    <rect x="710" y="150" width="240" height="120" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+                    <text x="830" y="178" text-anchor="middle" fill="#fbbf24" font-size="15" font-weight="700">select</text>
+                    <text x="830" y="198" text-anchor="middle" fill="#94a3b8" font-size="11">Fallback (跨平台)</text>
+                    <text x="830" y="222" text-anchor="middle" fill="#64748b" font-size="11">O(n) 线性扫描</text>
+                    <text x="830" y="240" text-anchor="middle" fill="#64748b" font-size="11">FD_SETSIZE 限制 (通常 1024)</text>
+
+                    <!-- 性能对比 -->
+                    <rect x="150" y="310" width="700" height="70" rx="10" fill="#1e293b" stroke="var(--border)" stroke-width="1"/>
+                    <text x="500" y="335" text-anchor="middle" fill="#94a3b8" font-size="13" font-weight="600">性能对比</text>
+                    <text x="280" y="360" text-anchor="middle" fill="#60a5fa" font-size="12">epoll: O(1) 无上限</text>
+                    <text x="500" y="360" text-anchor="middle" fill="#34d399" font-size="12">kqueue: O(1) 无上限</text>
+                    <text x="720" y="360" text-anchor="middle" fill="#fbbf24" font-size="12">select: O(n) ≤ 1024</text>
+                </svg>
+            </div>
+
+            <div class="compare-table-wrap">
+                <table class="compare-table">
+                    <thead>
+                        <tr>
+                            <th>特性</th>
+                            <th>epoll (Linux)</th>
+                            <th>kqueue (macOS)</th>
+                            <th>select (Fallback)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>时间复杂度</td>
+                            <td><span class="tag" style="background:#3b82f6;">O(1)</span></td>
+                            <td><span class="tag" style="background:#10b981;">O(1)</span></td>
+                            <td><span class="tag" style="background:#f59e0b;">O(n)</span></td>
+                        </tr>
+                        <tr>
+                            <td>最大连接数</td>
+                            <td>无上限 (受系统限制)</td>
+                            <td>无上限 (受系统限制)</td>
+                            <td>FD_SETSIZE (通常 1024)</td>
+                        </tr>
+                        <tr>
+                            <td>触发模式</td>
+                            <td>LT (水平) + ET (边缘)</td>
+                            <td>ET (边缘触发)</td>
+                            <td>LT (水平触发)</td>
+                        </tr>
+                        <tr>
+                            <td>Redis 默认</td>
+                            <td><span class="tag" style="background:#10b981;">首选</span></td>
+                            <td><span class="tag" style="background:#3b82f6;">macOS 首选</span></td>
+                            <td>仅兜底</td>
+                        </tr>
+                        <tr>
+                            <td>内核拷贝</td>
+                            <td>仅就绪事件 (mmap)</td>
+                            <td>仅就绪事件</td>
+                            <td>全量 fd_set 拷贝</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="info-box">
+                <strong>Redis 选择策略：</strong>编译时按 <code>epoll → kqueue → select</code> 优先级自动选择。
+                生产环境几乎都是 Linux + epoll。Redis 使用 LT（水平触发）模式，简化编程模型。
+            </div>
+        </div>
+
+        <!-- ========== Tab 4: 命令处理 ========== -->
+        <div class="tab-panel" id="panel-command">
+            <h2 class="section-title">命令处理全链路</h2>
+
+            <div class="flow-steps">
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#3b82f6;">1</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">acceptTcpHandler — 新连接接入</div>
+                        <div class="flow-step-desc">
+                            监听 fd 可读 → <code>accept()</code> 创建客户端 fd → 创建 <code>client</code> 结构体 →
+                            注册 <code>AE_READABLE</code> 事件，回调为 <code>readQueryFromClient</code>。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#10b981;">2</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">readQueryFromClient — 读取请求</div>
+                        <div class="flow-step-desc">
+                            从客户端 fd 读取数据到 <code>client.querybuf</code>（SDS 动态缓冲区）。
+                            Redis 7 支持 I/O 线程读取，此时由 IO 线程代读。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#f59e0b;">3</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">processInputBuffer — 协议解析</div>
+                        <div class="flow-step-desc">
+                            从 <code>querybuf</code> 中按 RESP 协议解析命令。
+                            支持内联命令和 RESP 数组两种格式，解析后填充 <code>client.argv[]</code> 和 <code>client.argc</code>。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#ef4444;">4</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">processCommand — 命令执行</div>
+                        <div class="flow-step-desc">
+                            查找命令表 <code>redisCommandTable</code> → 检查参数数、权限、内存限制 →
+                            调用 <code>cmd->proc()</code> 执行具体逻辑 → 结果写入 <code>client.buf</code> 或 <code>client.reply</code> 链表。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#8b5cf6;">5</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">addReply — 写入响应</div>
+                        <div class="flow-step-desc">
+                            响应数据先写入 <code>client.buf</code>（16KB 固定缓冲）或 <code>client.reply</code> 链表。
+                            然后注册 <code>AE_WRITABLE</code> 事件，回调为 <code>sendReplyToClient</code>，
+                            等待 fd 可写时异步发送。
+                        </div>
+                    </div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-num" style="background:#06b6d4;">6</div>
+                    <div class="flow-step-content">
+                        <div class="flow-step-title">sendReplyToClient — 发送响应</div>
+                        <div class="flow-step-desc">
+                            fd 可写 → <code>write()</code> 发送缓冲区数据 → 发送完毕后移除 <code>AE_WRITABLE</code> 事件。
+                            如果发送不完整（EAGAIN），保留写事件等待下次可写。
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="code-block">
+<span class="cmt">// client 结构体中与网络相关的关键字段</span>
+<span class="kw">typedef struct</span> <span class="type">client</span> {
+    <span class="type">int</span> fd;                 <span class="cmt">// 客户端 socket fd</span>
+    <span class="type">sds</span> querybuf;           <span class="cmt">// 查询缓冲区 (读入的原始数据)</span>
+    <span class="type">sds</span> pending_querybuf;   <span class="cmt">// I/O 线程读取后的待处理缓冲</span>
+    <span class="type">int</span> argc;               <span class="cmt">// 命令参数个数</span>
+    <span class="type">robj</span> **argv;            <span class="cmt">// 命令参数数组</span>
+    <span class="kw">struct</span> <span class="type">redisCommand</span> *cmd; <span class="cmt">// 解析后的命令对象</span>
+    <span class="type">char</span> buf[PROTO_REPLY_CHUNK_BYTES]; <span class="cmt">// 固定 16KB 响应缓冲</span>
+    <span class="type">int</span> bufpos;             <span class="cmt">// buf 中已用字节数</span>
+    <span class="type">list</span> *reply;            <span class="cmt">// 大响应用链表 (超过 buf 容量)</span>
+    <span class="type">unsigned long long</span> reply_bytes; <span class="cmt">// 待发送总字节数</span>
+    <span class="type">int</span> flags;              <span class="cmt">// CLIENT_* 标志位</span>
+} <span class="type">client</span>;
+            </div>
+
+            <div class="info-box">
+                <strong>RESP 协议：</strong>Redis 使用 RESP (REdis Serialization Protocol) 作为客户端-服务端通信协议。
+                简单字符串 <code>+OK\r\n</code>、错误 <code>-ERR\r\n</code>、整数 <code>:1\r\n</code>、
+                批量字符串 <code>$6\r\nhello\r\n</code>、数组 <code>*2\r\n...</code>。
+            </div>
+        </div>
+
+        <!-- ========== Tab 5: I/O 线程 ========== -->
+        <div class="tab-panel" id="panel-iothread">
+            <h2 class="section-title">Redis 6.0+ I/O 线程</h2>
+            <p style="color:var(--text-secondary);font-size:14px;line-height:1.8;margin-bottom:16px;">
+                Redis 6.0 引入 I/O 线程，将网络读写分摊到多线程，但<strong style="color:var(--accent);">命令执行仍在主线程</strong>，
+                保证数据一致性和命令顺序性。
+            </p>
+
+            <div class="arch-svg-container">
+                <svg viewBox="0 0 1000 450" xmlns="http://www.w3.org/2000/svg">
+                    <!-- 主线程 -->
+                    <rect x="350" y="20" width="300" height="70" rx="10" fill="#1e293b" stroke="#06b6d4" stroke-width="2"/>
+                    <text x="500" y="48" text-anchor="middle" fill="#06b6d4" font-size="15" font-weight="700">主线程 (Main Thread)</text>
+                    <text x="500" y="72" text-anchor="middle" fill="#94a3b8" font-size="11">命令执行 · 事件循环 · 数据结构操作</text>
+
+                    <!-- 读阶段 -->
+                    <rect x="50" y="140" width="900" height="120" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+                    <text x="500" y="168" text-anchor="middle" fill="#34d399" font-size="14" font-weight="700">读阶段 (io-threads-do-reads yes)</text>
+
+                    <rect x="80" y="185" width="180" height="55" rx="8" fill="#10b981" opacity="0.12" stroke="#10b981" stroke-width="1"/>
+                    <text x="170" y="210" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="600">IO Thread 1</text>
+                    <text x="170" y="228" text-anchor="middle" fill="#94a3b8" font-size="10">readQueryFromClient</text>
+
+                    <rect x="290" y="185" width="180" height="55" rx="8" fill="#10b981" opacity="0.12" stroke="#10b981" stroke-width="1"/>
+                    <text x="380" y="210" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="600">IO Thread 2</text>
+                    <text x="380" y="228" text-anchor="middle" fill="#94a3b8" font-size="10">readQueryFromClient</text>
+
+                    <rect x="500" y="185" width="180" height="55" rx="8" fill="#10b981" opacity="0.12" stroke="#10b981" stroke-width="1"/>
+                    <text x="590" y="210" text-anchor="middle" fill="#6ee7b7" font-size="12" font-weight="600">IO Thread N</text>
+                    <text x="590" y="228" text-anchor="middle" fill="#94a3b8" font-size="10">readQueryFromClient</text>
+
+                    <rect x="720" y="185" width="200" height="55" rx="8" fill="#06b6d4" opacity="0.12" stroke="#06b6d4" stroke-width="1"/>
+                    <text x="820" y="210" text-anchor="middle" fill="#22d3ee" font-size="12" font-weight="600">主线程也参与读</text>
+                    <text x="820" y="228" text-anchor="middle" fill="#94a3b8" font-size="10">分担部分 client 读取</text>
+
+                    <!-- 命令执行 -->
+                    <rect x="300" y="290" width="400" height="50" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+                    <text x="500" y="320" text-anchor="middle" fill="#fbbf24" font-size="14" font-weight="700">命令执行 (仅主线程)</text>
+
+                    <line x1="500" y1="260" x2="500" y2="290" stroke="#f59e0b" stroke-width="1.5"/>
+                    <polygon points="495,285 500,295 505,285" fill="#f59e0b"/>
+
+                    <!-- 写阶段 -->
+                    <rect x="50" y="370" width="900" height="60" rx="10" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+                    <text x="500" y="395" text-anchor="middle" fill="#60a5fa" font-size="14" font-weight="700">写阶段 — 并行将响应写回客户端</text>
+
+                    <text x="170" y="418" text-anchor="middle" fill="#93c5fd" font-size="11">IO Thread 1 write</text>
+                    <text x="380" y="418" text-anchor="middle" fill="#93c5fd" font-size="11">IO Thread 2 write</text>
+                    <text x="590" y="418" text-anchor="middle" fill="#93c5fd" font-size="11">IO Thread N write</text>
+                    <text x="820" y="418" text-anchor="middle" fill="#22d3ee" font-size="11">主线程 write</text>
+
+                    <line x1="500" y1="340" x2="500" y2="370" stroke="#3b82f6" stroke-width="1.5"/>
+                    <polygon points="495,365 500,375 505,365" fill="#3b82f6"/>
+                </svg>
+            </div>
+
+            <div class="feature-cards">
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#10b981;">📥</div>
+                    <div class="feature-card-title">读线程化</div>
+                    <div class="feature-card-desc">
+                        <code>io-threads-do-reads yes</code> 开启读线程化。
+                        主线程将客户端 fd 分配给 IO 线程，线程并行调用 <code>read()</code> 读取数据到 <code>pending_querybuf</code>。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#3b82f6;">📤</div>
+                    <div class="feature-card-title">写线程化</div>
+                    <div class="feature-card-desc">
+                        命令执行后，主线程将待写客户端分配给 IO 线程，
+                        线程并行调用 <code>write()</code> 发送响应。主线程等待所有 IO 线程完成。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#f59e0b;">🔒</div>
+                    <div class="feature-card-title">无锁设计</div>
+                    <div class="feature-card-desc">
+                        每个客户端同一时刻只被一个线程处理（主线程或某个 IO 线程），
+                        通过 <code>CLIENT_PENDING_READ</code> / <code>CLIENT_PENDING_WRITE</code> 标志避免竞争，无需加锁。
+                    </div>
+                </div>
+            </div>
+
+            <div class="code-block">
+<span class="cmt"># redis.conf — I/O 线程配置</span>
+<span class="cmt"># IO 线程数 (含主线程, 建议不超过 CPU 核数)</span>
+io-threads <span class="num">4</span>
+
+<span class="cmt"># 是否开启读线程化 (默认只开写线程化)</span>
+io-threads-do-reads <span class="kw">yes</span>
+            </div>
+
+            <div class="info-box">
+                <strong>注意：</strong>I/O 线程仅处理网络读写，<strong>不执行命令</strong>。
+                命令执行（<code>processCommand</code>）始终在主线程串行执行，保证原子性和数据一致性。
+                I/O 线程数建议设为 CPU 核数 - 1，不超过 8。
+            </div>
+        </div>
+
+        <!-- ========== Tab 6: 定时事件 ========== -->
+        <div class="tab-panel" id="panel-timer">
+            <h2 class="section-title">定时事件 & serverCron</h2>
+            <p style="color:var(--text-secondary);font-size:14px;line-height:1.8;margin-bottom:16px;">
+                Redis 的定时事件通过 <code>aeTimeEvent</code> 链表管理，最重要的定时回调是
+                <code style="background:var(--tag-bg);padding:1px 6px;border-radius:3px;font-size:12px;color:var(--accent);">serverCron</code>，
+                每 100ms 执行一次，负责大量后台维护任务。
+            </p>
+
+            <div class="feature-cards">
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#ef4444;">⏰</div>
+                    <div class="feature-card-title">过期 Key 清理</div>
+                    <div class="feature-card-desc">
+                        每次执行 <code>serverCron</code> 时，从过期字典中采样 <code>ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP</code> 个 key，
+                        逐步删除已过期 key。采用惰性 + 定期双重策略。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#10b981;">🔄</div>
+                    <div class="feature-card-title">Rehash 渐进式</div>
+                    <div class="feature-card-desc">
+                        HashTable rehash 不是一次完成，而是分摊到 <code>serverCron</code> 和每次 CRUD 操作中，
+                        每次迁移 1 个 bucket，避免长时间阻塞。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#3b82f6;">📊</div>
+                    <div class="feature-card-title">统计信息更新</div>
+                    <div class="feature-card-desc">
+                        更新 <code>instantaneous_ops_per_sec</code>、内存使用、连接数等统计指标，
+                        供 <code>INFO</code> 命令返回。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#f59e0b;">💾</div>
+                    <div class="feature-card-title">AOF 重写触发</div>
+                    <div class="feature-card-desc">
+                        检查 AOF 文件大小增长比例，超过阈值自动触发 <code>BGREWRITEAOF</code>。
+                        同时检查 RDB 快照条件。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#8b5cf6;">🔗</div>
+                    <div class="feature-card-title">主从复制心跳</div>
+                    <div class="feature-card-desc">
+                        主节点每秒向从节点发送 <code>PING</code>，从节点每秒发送 <code>REPLCONF ACK</code>。
+                        检测超时、处理断线重连、传播写缓冲。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#06b6d4;">📡</div>
+                    <div class="feature-card-title">Sentinel / Cluster</div>
+                    <div class="feature-card-desc">
+                        Sentinel 模式下执行故障检测、主观/客观下线判断。
+                        Cluster 模式下执行 Gossip 心跳、故障转移、slot 迁移。
+                    </div>
+                </div>
+            </div>
+
+            <h3 class="section-subtitle">serverCron 执行频率</h3>
+            <div class="code-block">
+<span class="cmt">// server.h — 默认 100ms 一次</span>
+<span class="kw">#define</span> <span class="fn">DEFAULT_HZ</span> <span class="num">10</span>   <span class="cmt">// 每秒 10 次 → 100ms 间隔</span>
+
+<span class="cmt">// 可通过配置调整</span>
+<span class="cmt">// hz 100 → 每 10ms 一次 (更精确的过期清理)</span>
+<span class="cmt">// hz 1   → 每 1000ms 一次 (更低 CPU 开销)</span>
+
+<span class="cmt">// serverCron 返回值决定下次执行时间</span>
+<span class="type">int</span> <span class="fn">serverCron</span>(<span class="kw">struct</span> <span class="type">aeEventLoop</span> *eventLoop, <span class="type">long long</span> id, <span class="type">void</span> *clientData) {
+    <span class="cmt">// 1. 更新服务器统计 (uptime, ops/sec, memory)</span>
+    <span class="cmt">// 2. 清理过期 key (active expire cycle)</span>
+    <span class="cmt">// 3. 渐进式 rehash</span>
+    <span class="cmt">// 4. 触发 AOF 重写 / RDB 保存</span>
+    <span class="cmt">// 5. 处理 SIGTERM 优雅关闭</span>
+    <span class="cmt">// 6. 主从复制超时检测</span>
+    <span class="cmt">// 7. Cluster/Sentinel 定时任务</span>
+    <span class="kw">return</span> <span class="num">1000</span>/server.hz;  <span class="cmt">// 返回下次执行间隔 (ms)</span>
+}
+            </div>
+
+            <div class="info-box">
+                <strong>定时事件 vs 文件事件：</strong>Redis 优先处理文件事件（客户端请求），再处理定时事件。
+                如果某轮循环中文件事件处理耗时过长，定时事件会延迟执行，但不会丢失。
+                <code>serverCron</code> 的实际执行间隔可能略大于 100ms。
+            </div>
+        </div>
+
+        <!-- ========== Tab 7: epoll 演进 ========== -->
+        <div class="tab-panel" id="panel-epoll">
+            <h2 class="section-title">I/O 模型演进：从 BIO 到 epoll</h2>
+            <p style="color:var(--text-secondary);font-size:14px;line-height:1.8;margin-bottom:16px;">
+                Linux 网络 I/O 模型经历了 <strong style="color:#ef4444;">BIO</strong> →
+                <strong style="color:#f59e0b;">select</strong> →
+                <strong style="color:#10b981;">poll</strong> →
+                <strong style="color:#3b82f6;">epoll</strong> 四代演进，
+                每一代都在解决前一代的核心瓶颈。Redis 选择 epoll 作为最终方案。
+            </p>
+
+            <!-- 演进路线 SVG -->
+            <div class="arch-svg-container">
+                <svg viewBox="0 0 1100 320" xmlns="http://www.w3.org/2000/svg">
+                    <!-- BIO -->
+                    <rect x="30" y="40" width="210" height="200" rx="12" fill="#1e293b" stroke="#ef4444" stroke-width="2"/>
+                    <text x="135" y="72" text-anchor="middle" fill="#f87171" font-size="16" font-weight="700">BIO</text>
+                    <text x="135" y="92" text-anchor="middle" fill="#94a3b8" font-size="11">同步阻塞 I/O</text>
+                    <line x1="50" y1="105" x2="220" y2="105" stroke="#374151" stroke-width="1"/>
+                    <text x="135" y="125" text-anchor="middle" fill="#64748b" font-size="11">一个连接一个线程</text>
+                    <text x="135" y="145" text-anchor="middle" fill="#64748b" font-size="11">accept() / read() 阻塞</text>
+                    <text x="135" y="165" text-anchor="middle" fill="#ef4444" font-size="11">线程数 = 连接数</text>
+                    <text x="135" y="185" text-anchor="middle" fill="#ef4444" font-size="11">C10K 无法解决</text>
+                    <rect x="70" y="200" width="130" height="24" rx="4" fill="#ef4444" opacity="0.2"/>
+                    <text x="135" y="217" text-anchor="middle" fill="#f87171" font-size="11" font-weight="600">O(n) 线程开销</text>
+
+                    <!-- 箭头 1 -->
+                    <line x1="240" y1="140" x2="280" y2="140" stroke="#f59e0b" stroke-width="2"/>
+                    <polygon points="276,135 286,140 276,145" fill="#f59e0b"/>
+                    <text x="263" y="130" text-anchor="middle" fill="#f59e0b" font-size="9">解阻塞</text>
+
+                    <!-- select -->
+                    <rect x="286" y="40" width="210" height="200" rx="12" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+                    <text x="391" y="72" text-anchor="middle" fill="#fbbf24" font-size="16" font-weight="700">select</text>
+                    <text x="391" y="92" text-anchor="middle" fill="#94a3b8" font-size="11">I/O 多路复用 (1990s)</text>
+                    <line x1="306" y1="105" x2="476" y2="105" stroke="#374151" stroke-width="1"/>
+                    <text x="391" y="125" text-anchor="middle" fill="#64748b" font-size="11">单线程监听多个 fd</text>
+                    <text x="391" y="145" text-anchor="middle" fill="#64748b" font-size="11">FD_SETSIZE = 1024</text>
+                    <text x="391" y="165" text-anchor="middle" fill="#f59e0b" font-size="11">每次全量拷贝 fd_set</text>
+                    <text x="391" y="185" text-anchor="middle" fill="#f59e0b" font-size="11">线性扫描 O(n)</text>
+                    <rect x="326" y="200" width="130" height="24" rx="4" fill="#f59e0b" opacity="0.2"/>
+                    <text x="391" y="217" text-anchor="middle" fill="#fbbf24" font-size="11" font-weight="600">O(n) + 1024 上限</text>
+
+                    <!-- 箭头 2 -->
+                    <line x1="496" y1="140" x2="536" y2="140" stroke="#10b981" stroke-width="2"/>
+                    <polygon points="532,135 542,140 532,145" fill="#10b981"/>
+                    <text x="519" y="130" text-anchor="middle" fill="#10b981" font-size="9">去上限</text>
+
+                    <!-- poll -->
+                    <rect x="542" y="40" width="210" height="200" rx="12" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+                    <text x="647" y="72" text-anchor="middle" fill="#34d399" font-size="16" font-weight="700">poll</text>
+                    <text x="647" y="92" text-anchor="middle" fill="#94a3b8" font-size="11">改进型多路复用</text>
+                    <line x1="562" y1="105" x2="732" y2="105" stroke="#374151" stroke-width="1"/>
+                    <text x="647" y="125" text-anchor="middle" fill="#64748b" font-size="11">pollfd 结构体数组</text>
+                    <text x="647" y="145" text-anchor="middle" fill="#10b981" font-size="11">突破 1024 限制</text>
+                    <text x="647" y="165" text-anchor="middle" fill="#f59e0b" font-size="11">仍然全量拷贝</text>
+                    <text x="647" y="185" text-anchor="middle" fill="#f59e0b" font-size="11">仍然线性扫描 O(n)</text>
+                    <rect x="582" y="200" width="130" height="24" rx="4" fill="#10b981" opacity="0.2"/>
+                    <text x="647" y="217" text-anchor="middle" fill="#34d399" font-size="11" font-weight="600">O(n) 无上限</text>
+
+                    <!-- 箭头 3 -->
+                    <line x1="752" y1="140" x2="792" y2="140" stroke="#3b82f6" stroke-width="2"/>
+                    <polygon points="788,135 798,140 788,145" fill="#3b82f6"/>
+                    <text x="775" y="130" text-anchor="middle" fill="#3b82f6" font-size="9">事件驱动</text>
+
+                    <!-- epoll -->
+                    <rect x="798" y="40" width="270" height="200" rx="12" fill="#1e293b" stroke="#3b82f6" stroke-width="2.5"/>
+                    <text x="933" y="72" text-anchor="middle" fill="#60a5fa" font-size="16" font-weight="700">epoll</text>
+                    <text x="933" y="92" text-anchor="middle" fill="#94a3b8" font-size="11">事件驱动 I/O (Linux 2.6)</text>
+                    <line x1="818" y1="105" x2="1048" y2="105" stroke="#374151" stroke-width="1"/>
+                    <text x="933" y="125" text-anchor="middle" fill="#64748b" font-size="11">红黑树 + 就绪链表</text>
+                    <text x="933" y="145" text-anchor="middle" fill="#3b82f6" font-size="11">O(1) 事件通知</text>
+                    <text x="933" y="165" text-anchor="middle" fill="#3b82f6" font-size="11">mmap 共享内存 (无拷贝)</text>
+                    <text x="933" y="185" text-anchor="middle" fill="#3b82f6" font-size="11">LT + ET 双模式</text>
+                    <rect x="868" y="200" width="130" height="24" rx="4" fill="#3b82f6" opacity="0.2"/>
+                    <text x="933" y="217" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="600">O(1) 无上限</text>
+
+                    <!-- 底部标注 -->
+                    <text x="550" y="290" text-anchor="middle" fill="#64748b" font-size="12">
+                        每一代解决的核心问题: 阻塞 → fd 上限 → 全量拷贝 + O(n) → 事件驱动 O(1)
+                    </text>
+                    <text x="550" y="310" text-anchor="middle" fill="#3b82f6" font-size="13" font-weight="600">
+                        Redis 选择 epoll → 单线程 + O(1) 事件通知 = 10万+ QPS
+                    </text>
+                </svg>
+            </div>
+
+            <!-- 四代模型详解 -->
+            <h3 class="section-subtitle" style="color:#ef4444;">第一代：BIO — 同步阻塞 I/O</h3>
+            <div class="code-block">
+<span class="cmt">// BIO 模型: 每个连接占用一个线程</span>
+<span class="kw">while</span> (<span class="num">true</span>) {
+    <span class="type">int</span> clientFd = <span class="fn">accept</span>(serverFd, ...);  <span class="cmt">// 阻塞等待新连接</span>
+    <span class="fn">pthread_create</span>(&tid, NULL, handle_client, clientFd);
+}
+
+<span class="type">void</span>* <span class="fn">handle_client</span>(<span class="type">int</span> fd) {
+    <span class="kw">while</span> (<span class="num">true</span>) {
+        <span class="type">int</span> n = <span class="fn">read</span>(fd, buf, sizeof(buf));  <span class="cmt">// 阻塞等待数据</span>
+        <span class="kw">if</span> (n <= <span class="num">0</span>) <span class="kw">break</span>;
+        <span class="fn">process</span>(buf, n);
+        <span class="fn">write</span>(fd, response, ...);          <span class="cmt">// 阻塞等待发送</span>
+    }
+}
+            </div>
+            <div class="info-box">
+                <strong>核心问题：</strong>每个连接需要一个线程，1 万个连接就需要 1 万个线程。
+                线程栈默认 8MB，10K 连接 = 80GB 内存。线程上下文切换开销巨大，完全不可行。
+            </div>
+
+            <h3 class="section-subtitle" style="color:#f59e0b;">第二代：select — 首次多路复用</h3>
+            <div class="code-block">
+<span class="cmt">// select 模型: 单线程监听多个 fd</span>
+<span class="type">fd_set</span> readfds;
+<span class="kw">while</span> (<span class="num">true</span>) {
+    FD_ZERO(&readfds);
+    <span class="kw">for</span> (<span class="type">int</span> i = <span class="num">0</span>; i < maxfd; i++)
+        FD_SET(i, &readfds);           <span class="cmt">// 每次都要重新构建 fd_set</span>
+
+    <span class="fn">select</span>(maxfd + <span class="num">1</span>, &readfds, NULL, NULL, NULL);  <span class="cmt">// 阻塞等待, 全量拷贝到内核</span>
+
+    <span class="kw">for</span> (<span class="type">int</span> i = <span class="num">0</span>; i < maxfd; i++) {     <span class="cmt">// 线性扫描所有 fd</span>
+        <span class="kw">if</span> (FD_ISSET(i, &readfds))
+            <span class="fn">handle</span>(i);
+    }
+}
+            </div>
+            <div class="feature-cards">
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#f59e0b;">✅</div>
+                    <div class="feature-card-title">解决了什么</div>
+                    <div class="feature-card-desc">
+                        单线程即可监听多个连接，不再需要一连接一线程。
+                        引入了 I/O 多路复用的概念。
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-card-icon" style="background:#ef4444;">❌</div>
+                    <div class="feature-card-title">三大缺陷</div>
+                    <div class="feature-card-desc">
+                        1. <code>FD_SETSIZE=1024</code> 硬编码上限<br>
+                        2. 每次调用需全量拷贝 fd_set 到内核（用户态→内核态）<br>
+                        3. 返回后需线性扫描 O(n) 找就绪 fd
+                    </div>
+                </div>
+            </div>
+
+            <h3 class="section-subtitle" style="color:#10b981;">第三代：poll — 突破 fd 上限</h3>
+            <div class="code-block">
+<span class="cmt">// poll 模型: 用 pollfd 数组替代 fd_set</span>
+<span class="kw">struct</span> <span class="type">pollfd</span> fds[MAX_FDS];   <span class="cmt">// 动态数组, 无 1024 限制</span>
+<span class="type">nfds_t</span> nfds = <span class="num">0</span>;
+
+<span class="kw">while</span> (<span class="num">true</span>) {
+    <span class="fn">poll</span>(fds, nfds, -<span class="num">1</span>);            <span class="cmt">// 仍然全量拷贝到内核</span>
+
+    <span class="kw">for</span> (<span class="type">int</span> i = <span class="num">0</span>; i < nfds; i++) {  <span class="cmt">// 仍然线性扫描</span>
+        <span class="kw">if</span> (fds[i].revents & POLLIN)
+            <span class="fn">handle</span>(fds[i].fd);
+    }
+}
+            </div>
+            <div class="info-box">
+                <strong>改进与不足：</strong>poll 用 <code>pollfd</code> 结构体数组替代了位图 <code>fd_set</code>，
+                突破了 1024 上限。但仍然每次全量拷贝 + 线性扫描 O(n)，
+                万级连接时性能依然不理想。
+            </div>
+
+            <h3 class="section-subtitle" style="color:#3b82f6;">第四代：epoll — 事件驱动 O(1)</h3>
+            <p style="color:var(--text-secondary);font-size:14px;line-height:1.8;margin-bottom:16px;">
+                epoll 是 Linux 2.6 引入的终极方案，通过<strong style="color:#3b82f6;">红黑树 + 就绪链表 + mmap 共享内存</strong>
+                彻底解决了 select/poll 的所有问题。Redis 的 <code>aeEventLoop</code> 底层即使用 epoll。
+            </p>
+
+            <!-- epoll 内部结构 SVG -->
+            <div class="arch-svg-container">
+                <svg viewBox="0 0 1000 420" xmlns="http://www.w3.org/2000/svg">
+                    <!-- 用户空间 -->
+                    <rect x="20" y="20" width="960" height="380" rx="12" fill="none" stroke="#374151" stroke-width="1" stroke-dasharray="6 3"/>
+                    <text x="50" y="45" fill="#64748b" font-size="12">用户空间</text>
+
+                    <!-- 内核空间 -->
+                    <rect x="40" y="55" width="920" height="330" rx="10" fill="#111827" stroke="#1e293b" stroke-width="1"/>
+                    <text x="70" y="78" fill="#475569" font-size="11">内核空间</text>
+
+                    <!-- epoll_create -->
+                    <rect x="60" y="90" width="200" height="50" rx="8" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+                    <text x="160" y="112" text-anchor="middle" fill="#60a5fa" font-size="13" font-weight="600">epoll_create</text>
+                    <text x="160" y="130" text-anchor="middle" fill="#64748b" font-size="10">创建 epoll 实例</text>
+
+                    <!-- 红黑树 -->
+                    <rect x="300" y="90" width="280" height="180" rx="10" fill="#1e293b" stroke="#ef4444" stroke-width="1.5"/>
+                    <text x="440" y="115" text-anchor="middle" fill="#f87171" font-size="14" font-weight="700">红黑树 (RBTree)</text>
+                    <text x="440" y="133" text-anchor="middle" fill="#94a3b8" font-size="11">存储所有注册的 fd</text>
+
+                    <!-- 树节点 -->
+                    <circle cx="440" cy="165" r="16" fill="#ef4444" opacity="0.2" stroke="#ef4444" stroke-width="1"/>
+                    <text x="440" y="170" text-anchor="middle" fill="#f87171" font-size="10">fd=5</text>
+
+                    <circle cx="380" cy="205" r="16" fill="#ef4444" opacity="0.2" stroke="#ef4444" stroke-width="1"/>
+                    <text x="380" y="210" text-anchor="middle" fill="#f87171" font-size="10">fd=3</text>
+                    <circle cx="500" cy="205" r="16" fill="#ef4444" opacity="0.2" stroke="#ef4444" stroke-width="1"/>
+                    <text x="500" y="210" text-anchor="middle" fill="#f87171" font-size="10">fd=8</text>
+
+                    <circle cx="350" cy="245" r="14" fill="#ef4444" opacity="0.15" stroke="#ef4444" stroke-width="0.8"/>
+                    <text x="350" y="250" text-anchor="middle" fill="#f87171" font-size="9">fd=1</text>
+                    <circle cx="410" cy="245" r="14" fill="#ef4444" opacity="0.15" stroke="#ef4444" stroke-width="0.8"/>
+                    <text x="410" y="250" text-anchor="middle" fill="#f87171" font-size="9">fd=4</text>
+                    <circle cx="470" cy="245" r="14" fill="#ef4444" opacity="0.15" stroke="#ef4444" stroke-width="0.8"/>
+                    <text x="470" y="250" text-anchor="middle" fill="#f87171" font-size="9">fd=7</text>
+                    <circle cx="530" cy="245" r="14" fill="#ef4444" opacity="0.15" stroke="#ef4444" stroke-width="0.8"/>
+                    <text x="530" y="250" text-anchor="middle" fill="#f87171" font-size="9">fd=9</text>
+
+                    <text x="440" y="265" text-anchor="middle" fill="#64748b" font-size="10">O(log n) 增删查</text>
+
+                    <!-- 就绪链表 -->
+                    <rect x="630" y="90" width="300" height="180" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+                    <text x="780" y="115" text-anchor="middle" fill="#34d399" font-size="14" font-weight="700">就绪链表 (Ready List)</text>
+                    <text x="780" y="133" text-anchor="middle" fill="#94a3b8" font-size="11">仅包含就绪的 fd</text>
+
+                    <rect x="660" y="148" width="100" height="28" rx="5" fill="#10b981" opacity="0.2" stroke="#10b981" stroke-width="1"/>
+                    <text x="710" y="167" text-anchor="middle" fill="#34d399" font-size="11">fd=3 READ</text>
+                    <rect x="780" y="148" width="100" height="28" rx="5" fill="#10b981" opacity="0.2" stroke="#10b981" stroke-width="1"/>
+                    <text x="830" y="167" text-anchor="middle" fill="#34d399" font-size="11">fd=8 WRITE</text>
+                    <rect x="660" y="186" width="100" height="28" rx="5" fill="#10b981" opacity="0.2" stroke="#10b981" stroke-width="1"/>
+                    <text x="710" y="205" text-anchor="middle" fill="#34d399" font-size="11">fd=1 READ</text>
+
+                    <text x="780" y="240" text-anchor="middle" fill="#64748b" font-size="10">epoll_wait 直接返回</text>
+                    <text x="780" y="258" text-anchor="middle" fill="#10b981" font-size="11" font-weight="600">O(1) — 只返回就绪事件</text>
+
+                    <!-- 连接线: 红黑树 → 就绪链表 -->
+                    <path d="M 580 180 L 620 180" fill="none" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arrowOrange)"/>
+                    <defs>
+                        <marker id="arrowOrange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                            <polygon points="0 0, 8 3, 0 6" fill="#f59e0b"/>
+                        </marker>
+                    </defs>
+                    <text x="600" y="172" text-anchor="middle" fill="#fbbf24" font-size="9">回调</text>
+
+                    <!-- epoll_ctl -->
+                    <rect x="60" y="160" width="200" height="50" rx="8" fill="#1e293b" stroke="#8b5cf6" stroke-width="1.5"/>
+                    <text x="160" y="182" text-anchor="middle" fill="#a78bfa" font-size="13" font-weight="600">epoll_ctl</text>
+                    <text x="160" y="200" text-anchor="middle" fill="#64748b" font-size="10">ADD / MOD / DEL fd</text>
+
+                    <!-- epoll_wait -->
+                    <rect x="60" y="230" width="200" height="50" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+                    <text x="160" y="252" text-anchor="middle" fill="#34d399" font-size="13" font-weight="600">epoll_wait</text>
+                    <text x="160" y="270" text-anchor="middle" fill="#64748b" font-size="10">返回就绪 fd 列表</text>
+
+                    <!-- 连接线 -->
+                    <line x1="260" y1="115" x2="300" y2="140" stroke="#3b82f6" stroke-width="1"/>
+                    <line x1="260" y1="185" x2="300" y2="185" stroke="#8b5cf6" stroke-width="1"/>
+                    <line x1="260" y1="255" x2="630" y2="200" stroke="#10b981" stroke-width="1"/>
+
+                    <!-- 底部: mmap -->
+                    <rect x="60" y="310" width="880" height="55" rx="8" fill="#1e293b" stroke="#06b6d4" stroke-width="1"/>
+                    <text x="500" y="335" text-anchor="middle" fill="#06b6d4" font-size="13" font-weight="600">mmap 共享内存</text>
+                    <text x="500" y="355" text-anchor="middle" fill="#64748b" font-size="11">
+                        epoll_create 时内核与用户空间 mmap 同一块内存, epoll_wait 返回时无需从内核拷贝到用户空间 — 零拷贝
+                    </text>
+                </svg>
+            </div>
+
+            <!-- epoll 三大 API -->
+            <h3 class="section-subtitle">epoll 三大 API</h3>
+            <div class="code-block">
+<span class="cmt">// 1. 创建 epoll 实例</span>
+<span class="type">int</span> epfd = <span class="fn">epoll_create</span>(<span class="num">1024</span>);
+<span class="cmt">//   内核创建: 红黑树 (存 fd) + 就绪链表 (存就绪事件) + mmap 共享区</span>
+<span class="cmt">//   返回 epoll 文件描述符 epfd</span>
+
+<span class="cmt">// 2. 注册/修改/删除 fd</span>
+<span class="kw">struct</span> <span class="type">epoll_event</span> ev;
+ev.events = EPOLLIN | EPOLLET;   <span class="cmt">// 监听读事件 + 边缘触发</span>
+ev.data.fd = clientFd;
+<span class="fn">epoll_ctl</span>(epfd, EPOLL_CTL_ADD, clientFd, &ev);
+<span class="cmt">//   O(log n) 红黑树插入, 只注册一次, 不用每次重新传</span>
+
+<span class="cmt">// 3. 等待就绪事件</span>
+<span class="kw">struct</span> <span class="type">epoll_event</span> events[MAX_EVENTS];
+<span class="type">int</span> n = <span class="fn">epoll_wait</span>(epfd, events, MAX_EVENTS, timeout);
+<span class="cmt">//   只返回就绪的 fd, 不需要遍历所有 fd</span>
+<span class="cmt">//   O(1) — 就绪多少返回多少, 与总 fd 数无关</span>
+
+<span class="kw">for</span> (<span class="type">int</span> i = <span class="num">0</span>; i < n; i++) {
+    <span class="fn">handle</span>(events[i].data.fd);  <span class="cmt">// 只处理就绪的</span>
+}
+            </div>
+
+            <!-- LT vs ET -->
+            <h3 class="section-subtitle">LT (水平触发) vs ET (边缘触发)</h3>
+            <div class="arch-svg-container">
+                <svg viewBox="0 0 1000 250" xmlns="http://www.w3.org/2000/svg">
+                    <!-- LT -->
+                    <rect x="30" y="20" width="450" height="210" rx="10" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+                    <text x="255" y="50" text-anchor="middle" fill="#60a5fa" font-size="15" font-weight="700">LT — 水平触发 (Level Triggered)</text>
+
+                    <!-- 信号图 -->
+                    <line x1="70" y1="140" x2="440" y2="140" stroke="#374151" stroke-width="1"/>
+                    <rect x="120" y="90" width="80" height="50" fill="#3b82f6" opacity="0.3"/>
+                    <rect x="260" y="90" width="80" height="50" fill="#3b82f6" opacity="0.3"/>
+                    <text x="160" y="120" text-anchor="middle" fill="#60a5fa" font-size="10">有数据</text>
+                    <text x="300" y="120" text-anchor="middle" fill="#60a5fa" font-size="10">有数据</text>
+
+                    <!-- 通知箭头 -->
+                    <text x="160" y="165" text-anchor="middle" fill="#fbbf24" font-size="10">通知</text>
+                    <text x="200" y="165" text-anchor="middle" fill="#fbbf24" font-size="10">通知</text>
+                    <text x="300" y="165" text-anchor="middle" fill="#fbbf24" font-size="10">通知</text>
+                    <text x="340" y="165" text-anchor="middle" fill="#fbbf24" font-size="10">通知</text>
+
+                    <text x="255" y="200" text-anchor="middle" fill="#94a3b8" font-size="11">缓冲区有数据就持续通知, 直到读完</text>
+                    <text x="255" y="218" text-anchor="middle" fill="#3b82f6" font-size="12" font-weight="600">Redis 默认使用 LT</text>
+
+                    <!-- ET -->
+                    <rect x="520" y="20" width="450" height="210" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+                    <text x="745" y="50" text-anchor="middle" fill="#fbbf24" font-size="15" font-weight="700">ET — 边缘触发 (Edge Triggered)</text>
+
+                    <!-- 信号图 -->
+                    <line x1="560" y1="140" x2="930" y2="140" stroke="#374151" stroke-width="1"/>
+                    <rect x="610" y="90" width="80" height="50" fill="#f59e0b" opacity="0.3"/>
+                    <rect x="750" y="90" width="80" height="50" fill="#f59e0b" opacity="0.3"/>
+                    <text x="650" y="120" text-anchor="middle" fill="#fbbf24" font-size="10">有数据</text>
+                    <text x="790" y="120" text-anchor="middle" fill="#fbbf24" font-size="10">有数据</text>
+
+                    <!-- 通知箭头 -->
+                    <text x="610" y="165" text-anchor="middle" fill="#ef4444" font-size="10">通知</text>
+                    <text x="750" y="165" text-anchor="middle" fill="#ef4444" font-size="10">通知</text>
+
+                    <text x="745" y="200" text-anchor="middle" fill="#94a3b8" font-size="11">仅状态变化时通知一次, 必须一次读完</text>
+                    <text x="745" y="218" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="600">Nginx 使用 ET</text>
+                </svg>
+            </div>
+
+            <div class="compare-table-wrap">
+                <table class="compare-table">
+                    <thead>
+                        <tr>
+                            <th>对比项</th>
+                            <th>LT (水平触发)</th>
+                            <th>ET (边缘触发)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>通知时机</td>
+                            <td>缓冲区有数据就持续通知</td>
+                            <td>仅新数据到达时通知一次</td>
+                        </tr>
+                        <tr>
+                            <td>读方式</td>
+                            <td>可部分读，下次继续通知</td>
+                            <td>必须一次读完 (非阻塞循环读)</td>
+                        </tr>
+                        <tr>
+                            <td>编程复杂度</td>
+                            <td><span class="tag" style="background:#10b981;">简单</span> 不怕漏读</td>
+                            <td><span class="tag" style="background:#ef4444;">复杂</span> 漏读则等下次新数据</td>
+                        </tr>
+                        <tr>
+                            <td>系统调用次数</td>
+                            <td>较多 (每次通知都 epoll_wait)</td>
+                            <td>较少 (一次通知处理完)</td>
+                        </tr>
+                        <tr>
+                            <td>Redis 选择</td>
+                            <td><span class="tag" style="background:#3b82f6;">LT</span> 简化编程模型</td>
+                            <td>—</td>
+                        </tr>
+                        <tr>
+                            <td>Nginx 选择</td>
+                            <td>—</td>
+                            <td><span class="tag" style="background:#f59e0b;">ET</span> 追求极致性能</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 四代全面对比 -->
+            <h3 class="section-subtitle">四代 I/O 模型全面对比</h3>
+            <div class="compare-table-wrap">
+                <table class="compare-table">
+                    <thead>
+                        <tr>
+                            <th>对比项</th>
+                            <th style="color:#f87171;">BIO</th>
+                            <th style="color:#fbbf24;">select</th>
+                            <th style="color:#34d399;">poll</th>
+                            <th style="color:#60a5fa;">epoll</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>模型</td>
+                            <td>同步阻塞</td>
+                            <td>多路复用</td>
+                            <td>多路复用</td>
+                            <td>事件驱动</td>
+                        </tr>
+                        <tr>
+                            <td>fd 上限</td>
+                            <td>无限制 (线程数限制)</td>
+                            <td><span class="tag" style="background:#ef4444;">1024</span></td>
+                            <td>无限制</td>
+                            <td>无限制</td>
+                        </tr>
+                        <tr>
+                            <td>就绪检测</td>
+                            <td>—</td>
+                            <td>线性扫描 O(n)</td>
+                            <td>线性扫描 O(n)</td>
+                            <td><span class="tag" style="background:#3b82f6;">O(1)</span></td>
+                        </tr>
+                        <tr>
+                            <td>内核拷贝</td>
+                            <td>—</td>
+                            <td>每次全量拷贝 fd_set</td>
+                            <td>每次全量拷贝 pollfd[]</td>
+                            <td><span class="tag" style="background:#3b82f6;">mmap 零拷贝</span></td>
+                        </tr>
+                        <tr>
+                            <td>fd 注册</td>
+                            <td>—</td>
+                            <td>每次重新构建</td>
+                            <td>每次重新传入</td>
+                            <td><span class="tag" style="background:#3b82f6;">一次注册永久有效</span></td>
+                        </tr>
+                        <tr>
+                            <td>触发模式</td>
+                            <td>—</td>
+                            <td>LT</td>
+                            <td>LT</td>
+                            <td>LT + ET</td>
+                        </tr>
+                        <tr>
+                            <td>C10K</td>
+                            <td><span class="tag" style="background:#ef4444;">不可行</span></td>
+                            <td><span class="tag" style="background:#f59e0b;">勉强</span></td>
+                            <td><span class="tag" style="background:#f59e0b;">勉强</span></td>
+                            <td><span class="tag" style="background:#10b981;">轻松</span></td>
+                        </tr>
+                        <tr>
+                            <td>C100K / C1M</td>
+                            <td>不可行</td>
+                            <td>不可行</td>
+                            <td>不可行</td>
+                            <td><span class="tag" style="background:#10b981;">可行</span></td>
+                        </tr>
+                        <tr>
+                            <td>Redis 使用</td>
+                            <td>—</td>
+                            <td>Fallback</td>
+                            <td>—</td>
+                            <td><span class="tag" style="background:#3b82f6;">首选</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Redis 中 epoll 的使用 -->
+            <h3 class="section-subtitle">Redis 中 epoll 的使用方式</h3>
+            <div class="code-block">
+<span class="cmt">// ae_epoll.c — Redis 对 epoll 的封装</span>
+
+<span class="cmt">// 1. 创建 epoll 实例</span>
+<span class="kw">static</span> <span class="type">int</span> <span class="fn">aeApiCreate</span>(<span class="type">aeEventLoop</span> *eventLoop) {
+    <span class="type">aeApiState</span> *state = <span class="fn">zmalloc</span>(<span class="kw">sizeof</span>(<span class="type">aeApiState</span>));
+    state->epfd = <span class="fn">epoll_create</span>(<span class="num">1024</span>);  <span class="cmt">// 创建 epoll 实例</span>
+    state->events = <span class="fn">zmalloc</span>(<span class="kw">sizeof</span>(<span class="type">struct epoll_event</span>) * eventLoop->setsize);
+    eventLoop->apidata = state;
+    <span class="kw">return</span> AE_OK;
+}
+
+<span class="cmt">// 2. 注册/修改 fd 事件</span>
+<span class="kw">static</span> <span class="type">int</span> <span class="fn">aeApiAddEvent</span>(<span class="type">aeEventLoop</span> *eventLoop, <span class="type">int</span> fd, <span class="type">int</span> mask) {
+    <span class="type">struct epoll_event</span> ee;
+    <span class="type">int</span> op = (prevmask == AE_NONE) ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
+    ee.events = <span class="num">0</span>;
+    <span class="kw">if</span> (mask & AE_READABLE) ee.events |= EPOLLIN;   <span class="cmt">// 读事件</span>
+    <span class="kw">if</span> (mask & AE_WRITABLE) ee.events |= EPOLLOUT;  <span class="cmt">// 写事件</span>
+    ee.data.fd = fd;
+    <span class="fn">epoll_ctl</span>(state->epfd, op, fd, &ee);  <span class="cmt">// O(log n)</span>
+}
+
+<span class="cmt">// 3. 等待就绪事件</span>
+<span class="kw">static</span> <span class="type">int</span> <span class="fn">aeApiPoll</span>(<span class="type">aeEventLoop</span> *eventLoop, <span class="kw">struct</span> <span class="type">timeval</span> *tvp) {
+    <span class="type">int</span> numevents = <span class="fn">epoll_wait</span>(state->epfd, state->events, setsize, timeout);
+    <span class="cmt">//   只返回就绪的 fd, O(1)</span>
+    <span class="kw">for</span> (<span class="type">int</span> i = <span class="num">0</span>; i < numevents; i++) {
+        <span class="type">int</span> mask = <span class="num">0</span>;
+        <span class="kw">if</span> (state->events[i].events & EPOLLIN)  mask |= AE_READABLE;
+        <span class="kw">if</span> (state->events[i].events & EPOLLOUT) mask |= AE_WRITABLE;
+        eventLoop->fired[i].fd = state->events[i].data.fd;
+        eventLoop->fired[i].mask = mask;
+    }
+    <span class="kw">return</span> numevents;
+}
+            </div>
+
+            <div class="info-box">
+                <strong>Redis 为什么选 LT 而非 ET：</strong>
+                LT 模式下，如果一次 <code>read()</code> 没读完缓冲区，下次 <code>epoll_wait</code> 仍会通知，
+                编程更简单安全。ET 模式虽然性能略高，但要求非阻塞循环读取直到 EAGAIN，
+                在 Redis 的单线程模型中收益有限，反而增加复杂度。
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Tab 切换
+        document.querySelectorAll('.network-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.network-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+            });
+        });
+
+        // 导航栏加载
+        fetch('/api/categories').then(r => r.json()).then(data => {
+            const nav = document.getElementById('navBar');
+            if (!nav) return;
+            let html = '<div class="nav-bar">';
+            data.categories.forEach(cat => {
+                cat.types.forEach(t => {
+                    const cls = t.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const isActive = t.status === 'active' && t.page_path;
+                    html += isActive
+                        ? `<a class="${cls}" href="${t.page_path}">${t.name}</a>`
+                        : `<a class="${cls}" style="opacity:0.4;cursor:not-allowed;">${t.name}</a>`;
+                });
+                html += '<span class="nav-sep">|</span>';
+            });
+            html += '</div>';
+            nav.innerHTML = html;
+        }).catch(() => {});
+    </script>
+</body>
+</html>
