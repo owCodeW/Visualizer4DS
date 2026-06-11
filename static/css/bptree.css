@@ -1,0 +1,157 @@
+/* ============================================================
+   MySQL B+Tree — 页面级样式
+   ============================================================ */
+
+/* B+Tree 控制栏需要更宽以容纳批量填充行 */
+.main-container > .ctrl-bar {
+    flex: 0 0 200px;
+    min-width: 120px;
+}
+
+/* 批量填充行: 确保输入框可见数字 */
+.ctrl-bar .bulk-fill-row input[type="number"] {
+    flex: 1 1 60px;
+    min-width: 50px;
+}
+
+/* B+Tree 专用样式 */
+.bptree-stats {
+    max-width: 1400px;
+    margin: 12px auto;
+    display: flex; gap: 14px;
+    flex-wrap: wrap;
+}
+.bptree-stats .stat {
+    background: #f0f9ff; border: 1px solid #bae6fd;
+    border-radius: 6px; padding: 6px 12px;
+    font-size: 13px; color: #0c4a6e;
+}
+.bptree-stats .stat strong { color: #0369a1; margin-right: 4px; font-size: 15px; }
+
+.tree-canvas {
+    background: linear-gradient(180deg, #fafafa 0%, #f1f5f9 100%);
+    border-radius: 10px; padding: 28px 16px 16px;
+    min-height: 380px; overflow: auto;
+    position: relative;
+}
+.tree-level {
+    display: flex; justify-content: center;
+    margin-bottom: 56px; position: relative;
+}
+.tree-level-label {
+    position: absolute; left: 12px; top: 4px;
+    font-size: 11px; color: #64748b;
+    background: rgba(255,255,255,0.7); padding: 2px 6px; border-radius: 4px;
+}
+
+/* 节点通用 */
+.bpnode {
+    display: inline-flex; flex-direction: column;
+    border: 2px solid #00758f; border-radius: 8px;
+    background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    position: relative; margin: 0 4px;
+    transition: all 0.3s ease;
+    z-index: 2;
+}
+.bpnode-internal {
+    border-color: #00758f; background: #ecfeff;
+}
+.bpnode-leaf {
+    border-color: #059669; background: #f0fdf4;
+    border-style: solid;
+}
+.bpnode-highlight {
+    box-shadow: 0 0 0 4px #fbbf24, 0 2px 6px rgba(0,0,0,0.08);
+    transform: translateY(-3px);
+}
+.bpnode-path {
+    box-shadow: 0 0 0 3px #f59e0b, 0 0 0 6px rgba(245, 158, 11, 0.3);
+}
+.bpnode-found {
+    box-shadow: 0 0 0 3px #10b981, 0 0 0 6px rgba(16, 185, 129, 0.3);
+}
+.bpnode-range {
+    box-shadow: 0 0 0 3px #8b5cf6, 0 0 0 6px rgba(139, 92, 246, 0.2);
+}
+.bpnode-empty {
+    opacity: 0.3; border-style: dashed;
+}
+
+.bpnode-id {
+    position: absolute; top: -10px; right: -6px;
+    background: #00758f; color: #fff;
+    border-radius: 10px; padding: 1px 6px;
+    font-size: 10px; font-weight: bold;
+}
+.bpnode-leaf .bpnode-id { background: #059669; }
+
+.bpnode-row {
+    display: flex; align-items: stretch;
+}
+.bpnode-cell {
+    padding: 8px 12px; min-width: 38px;
+    text-align: center; font-family: 'SF Mono', Monaco, monospace;
+    font-size: 14px; font-weight: 600;
+}
+.bpnode-internal .bpnode-cell { color: #0c4a6e; }
+.bpnode-leaf .bpnode-cell { color: #064e3b; }
+.bpnode-cell.key { background: rgba(0,0,0,0.04); }
+.bpnode-cell.pointer {
+    background: rgba(0,117,143,0.08);
+    color: #0c4a6e; font-size: 10px;
+    cursor: default;
+}
+.bpnode-cell.divider { width: 2px; background: #00758f; opacity: 0.4; }
+.bpnode-leaf .bpnode-cell.divider { background: #059669; opacity: 0.4; }
+
+.bpnode-label {
+    font-size: 10px; color: #64748b;
+    padding: 2px 0; text-align: center;
+    background: rgba(0,0,0,0.03);
+    border-top: 1px solid rgba(0,0,0,0.08);
+    border-radius: 0 0 6px 6px;
+}
+
+/* 连线 (父子) */
+.tree-svg {
+    position: absolute; top: 0; left: 0;
+    pointer-events: none; z-index: 1;
+}
+.tree-edge {
+    stroke: #94a3b8; stroke-width: 1.5; fill: none;
+}
+.tree-edge-active { stroke: #f59e0b; stroke-width: 2.5; }
+.tree-edge-arrow {
+    transition: fill 0.3s ease;
+}
+
+/* 叶子链表 */
+.leaf-link-row {
+    display: flex; justify-content: center; align-items: center;
+    flex-wrap: wrap; gap: 0; margin-top: 20px;
+    padding: 12px; background: #f0fdf4;
+    border-radius: 8px; border: 1px dashed #059669;
+}
+.leaf-link-row .label {
+    font-size: 11px; color: #059669; font-weight: bold;
+    width: 100%; text-align: left; margin-bottom: 6px;
+}
+.leaf-link-mini {
+    display: inline-flex; gap: 4px; align-items: center;
+    padding: 4px 8px; background: #fff; border-radius: 6px;
+    border: 1px solid #059669; font-size: 12px;
+    margin: 0 4px;
+}
+.leaf-link-mini span { color: #064e3b; font-weight: 600; font-family: monospace; }
+.leaf-link-arrow { color: #059669; font-weight: bold; font-size: 18px; }
+
+/* 操作说明 */
+.op-guide {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px; margin-top: 10px;
+}
+.op-guide .g {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; color: #475569;
+}
+.op-guide .g strong { color: #00758f; }

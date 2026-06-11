@@ -1,0 +1,204 @@
+/* ============================================================
+   主页 — 页面级样式
+   ============================================================ */
+
+/* 主页专用样式 */
+.home-hero {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    color: #fff;
+    padding: 30px 40px;
+    border-radius: 12px;
+    margin: 0 auto 30px;
+    max-width: 1200px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.home-hero h1 {
+    margin: 0 0 8px 0;
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(90deg, #fbbf24, #f87171, #c084fc);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.home-hero p {
+    margin: 0;
+    color: #cbd5e1;
+    font-size: 14px;
+}
+.home-stats {
+    display: flex;
+    gap: 16px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+}
+.stat-pill {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    color: #e2e8f0;
+}
+.stat-pill strong {
+    color: #fbbf24;
+    margin-right: 4px;
+}
+
+/* 分类板块 */
+.category-section {
+    max-width: 1200px;
+    margin: 0 auto 32px;
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px 28px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.category-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 2px solid #f1f5f9;
+}
+.category-icon {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    color: #fff;
+    font-size: 24px;
+    font-weight: bold;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+.category-title-block {
+    flex: 1;
+}
+.category-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: #1e293b;
+    margin: 0 0 2px 0;
+}
+.category-version {
+    font-size: 11px;
+    color: #64748b;
+    background: #f1f5f9;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 6px;
+}
+.category-desc {
+    font-size: 13px;
+    color: #64748b;
+    margin: 0;
+}
+.category-status {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+.status-active { background: #dcfce7; color: #166534; }
+.status-planned { background: #fef3c7; color: #92400e; }
+
+/* 类型卡片 */
+.type-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+}
+.type-card {
+    display: block;
+    padding: 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.2s ease;
+    position: relative;
+    background: #fff;
+}
+.type-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+    border-color: #cbd5e1;
+}
+.type-card.disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    background: #f8fafc;
+}
+.type-card.disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+.type-card-icon {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 10px;
+}
+.type-card-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 4px;
+}
+.type-card-desc {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.5;
+    margin-bottom: 10px;
+    min-height: 36px;
+}
+.type-card-encodings {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    font-size: 11px;
+}
+.enc-tag {
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-family: Consolas, monospace;
+    font-weight: 600;
+}
+.enc-arrow { color: #dc2626; font-weight: bold; }
+
+/* 占位卡片 (planned) */
+.type-card-placeholder {
+    border: 1px dashed #cbd5e1;
+    background: #f8fafc;
+    color: #94a3b8;
+    padding: 16px;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 13px;
+}
+
+/* 规划中分类 */
+.planned-types-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    margin-top: 4px;
+}
+.planned-type {
+    background: #f1f5f9;
+    color: #475569;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: Consolas, monospace;
+}

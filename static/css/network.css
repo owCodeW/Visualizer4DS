@@ -1,0 +1,337 @@
+/* ============================================================
+   Redis 网络模型 — 页面级样式 (深色主题)
+   ============================================================ */
+:root {
+    --bg: #0a0e17;
+    --panel-bg: #111827;
+    --card-bg: #1a1f2e;
+    --border: #2a3345;
+    --text: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --accent: #06b6d4;
+    --accent2: #3b82f6;
+    --client-color: #6b7280;
+    --ae-color: #06b6d4;
+    --ae-glow: #06b6d466;
+    --thread-color: #3b82f6;
+    --thread-glow: #3b82f666;
+    --io-color: #10b981;
+    --io-glow: #10b98166;
+    --command-color: #f59e0b;
+    --command-glow: #f59e0b66;
+    --timer-color: #8b5cf6;
+    --timer-glow: #8b5cf666;
+    --replication-color: #ef4444;
+    --replication-glow: #ef444466;
+    --tab-active-bg: #1e293b;
+    --tab-hover-bg: #1a2340;
+    --tag-bg: #1e293b;
+    --highlight: #fbbf24;
+    --flow-read: #34d399;
+    --flow-write: #f87171;
+    --flow-event: #60a5fa;
+    --flow-timer: #c084fc;
+}
+
+body {
+    background: var(--bg) !important;
+    color: var(--text);
+    padding: 0 !important;
+}
+
+.page-title {
+    background: linear-gradient(135deg, #06b6d4, #3b82f6, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    color: transparent;
+}
+.page-desc {
+    color: var(--text-secondary);
+}
+
+/* 主容器 */
+.network-main-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+    position: relative;
+    z-index: 1;
+}
+
+/* Tab 切换栏 */
+.network-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 24px;
+    background: var(--panel-bg);
+    border-radius: 12px;
+    padding: 6px;
+    overflow-x: auto;
+}
+.network-tab {
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    transition: all 0.25s ease;
+    white-space: nowrap;
+}
+.network-tab:hover {
+    color: var(--text);
+    background: var(--tab-hover-bg);
+}
+.network-tab.active {
+    color: #fff;
+    background: var(--tab-active-bg);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.network-tab .tab-icon {
+    margin-right: 6px;
+}
+
+/* Tab 内容面板 */
+.tab-panel {
+    display: none;
+    animation: panelIn 0.35s ease;
+}
+.tab-panel.active { display: block; }
+@keyframes panelIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* SVG 架构图区域 */
+.arch-svg-container {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+}
+.arch-svg-container svg {
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+    display: block;
+}
+
+/* 特性卡片 */
+.feature-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+}
+.feature-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.feature-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.feature-card-icon {
+    width: 40px; height: 40px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    margin-bottom: 12px;
+}
+.feature-card-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 8px;
+}
+.feature-card-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+.feature-card code {
+    background: var(--tag-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--accent);
+}
+
+/* 对比表格 */
+.compare-table-wrap {
+    overflow-x: auto;
+    margin-top: 24px;
+}
+.compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    background: var(--panel-bg);
+    border-radius: 10px;
+    overflow: hidden;
+}
+.compare-table th {
+    background: var(--card-bg);
+    color: var(--text);
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border);
+}
+.compare-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+}
+.compare-table tr:last-child td { border-bottom: none; }
+.compare-table tr:hover td { background: rgba(255,255,255,0.03); }
+.compare-table .tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+}
+
+/* 流程步骤 */
+.flow-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-top: 20px;
+}
+.flow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px 0;
+    position: relative;
+}
+.flow-step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 19px;
+    top: 52px;
+    bottom: -4px;
+    width: 2px;
+    background: var(--border);
+}
+.flow-step-num {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700;
+    font-size: 16px;
+    flex-shrink: 0;
+    color: #fff;
+}
+.flow-step-content {
+    flex: 1;
+}
+.flow-step-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+}
+.flow-step-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+.flow-step-desc code {
+    background: var(--tag-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    color: var(--accent);
+}
+
+/* 代码块 */
+.code-block {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 16px 0;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #c9d1d9;
+    overflow-x: auto;
+    white-space: pre;
+}
+.code-block .kw { color: #ff7b72; }
+.code-block .fn { color: #d2a8ff; }
+.code-block .str { color: #a5d6ff; }
+.code-block .cmt { color: #8b949e; }
+.code-block .type { color: #79c0ff; }
+.code-block .num { color: #79c0ff; }
+
+/* 小节标题 */
+.section-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 32px 0 16px;
+    padding-left: 12px;
+    border-left: 4px solid var(--accent);
+}
+.section-subtitle {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 24px 0 12px;
+}
+
+/* 提示框 */
+.info-box {
+    background: rgba(6, 182, 212, 0.08);
+    border: 1px solid rgba(6, 182, 212, 0.25);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+}
+.info-box strong {
+    color: var(--accent);
+}
+
+/* 动画: 数据流动 */
+@keyframes dataFlow {
+    0%   { stroke-dashoffset: 20; }
+    100% { stroke-dashoffset: 0; }
+}
+.flow-line {
+    stroke-dasharray: 8 4;
+    animation: dataFlow 1s linear infinite;
+}
+
+/* 动画: 脉冲 */
+@keyframes pulse {
+    0%, 100% { opacity: 0.6; }
+    50%      { opacity: 1; }
+}
+.pulse-node {
+    animation: pulse 2s ease-in-out infinite;
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+    .network-main-container { padding: 12px; }
+    .feature-cards { grid-template-columns: 1fr; }
+    .network-tabs { gap: 2px; }
+    .network-tab { padding: 8px 14px; font-size: 13px; }
+}

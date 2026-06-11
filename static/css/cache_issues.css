@@ -1,0 +1,325 @@
+/* ============================================================
+   Redis 缓存三大问题 — 页面级样式
+   ============================================================ */
+
+/* ---------- 基础重置 ---------- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, sans-serif;
+    background: linear-gradient(145deg, #f4f9ff 0%, #e9f0fa 100%);
+    color: #1a2c3e;
+    line-height: 1.4;
+    padding: 2rem 1.5rem;
+}
+
+/* ---------- 主容器 ---------- */
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* ---------- 头部区域 ---------- */
+.hero {
+    text-align: center;
+    margin-bottom: 3rem;
+}
+.hero h1 {
+    font-size: 2.6rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #1E3C72, #2A5298);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    letter-spacing: -0.01em;
+    display: inline-block;
+    margin-bottom: 0.5rem;
+}
+.hero .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(255,255,240,0.7);
+    backdrop-filter: blur(2px);
+    padding: 0.4rem 1rem;
+    border-radius: 40px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #1e4668;
+    border: 1px solid rgba(42,82,152,0.2);
+    margin-top: 0.5rem;
+}
+.hero p {
+    max-width: 700px;
+    margin: 1rem auto 0;
+    font-size: 1.1rem;
+    color: #2c4c6e;
+    font-weight: 400;
+}
+
+/* ---------- 三卡竖直排列 (每张铺满横屏) ---------- */
+.cards-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    margin-top: 1rem;
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(2px);
+    border-radius: 2rem;
+    box-shadow: 0 20px 35px -12px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0,0,0,0.02);
+    transition: transform 0.25s ease, box-shadow 0.3s ease;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.6);
+}
+.card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 28px 40px -16px rgba(0, 32, 64, 0.2);
+    background: #ffffff;
+}
+
+/* 卡片头部 — 三大主题色 */
+.card-header {
+    padding: 1.4rem 1.8rem 0.8rem 1.8rem;
+    border-bottom: 3px solid;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.card-header i {
+    font-size: 2.4rem;
+}
+.card-header h2 {
+    font-size: 1.7rem;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+
+/* 穿透 — 橙 */
+.card.penetration .card-header { border-bottom-color: #f97316; }
+.card.penetration .card-header i { color: #f97316; }
+.card.penetration .card-header h2 { color: #c2410c; }
+
+/* 击穿 — 黄 */
+.card.breakdown .card-header { border-bottom-color: #eab308; }
+.card.breakdown .card-header i { color: #eab308; }
+.card.breakdown .card-header h2 { color: #a16207; }
+
+/* 雪崩 — 蓝 */
+.card.avalanche .card-header { border-bottom-color: #3b82f6; }
+.card.avalanche .card-header i { color: #3b82f6; }
+.card.avalanche .card-header h2 { color: #1e4a76; }
+
+/* ---------- 卡片内容区 ---------- */
+.card-body {
+    padding: 1.6rem 1.8rem 1.8rem 1.8rem;
+}
+
+/* 描述块 */
+.description {
+    background: #f8fafc;
+    border-radius: 1.2rem;
+    padding: 0.9rem 1.2rem;
+    margin-bottom: 1.4rem;
+    border-left: 5px solid;
+    font-size: 0.95rem;
+    line-height: 1.45;
+}
+.card.penetration .description { border-left-color: #f97316; background: #fff7ed; }
+.card.breakdown .description   { border-left-color: #eab308; background: #fefce8; }
+.card.avalanche .description   { border-left-color: #3b82f6; background: #eff6ff; }
+
+/* 小节标题 */
+.section-title {
+    font-weight: 700;
+    font-size: 1rem;
+    margin: 1rem 0 0.5rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.section-title i {
+    font-size: 1rem;
+    width: 1.6rem;
+    color: #2c5a7a;
+}
+
+/* 列表 */
+.cause-list, .solution-list {
+    list-style: none;
+    padding-left: 0.2rem;
+}
+.cause-list li, .solution-list li {
+    margin-bottom: 0.55rem;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+}
+.cause-list li i.fa-times-circle           { color: #dc2626; font-size: 0.8rem; margin-top: 0.2rem; }
+.cause-list li i.fa-exclamation-triangle   { color: #ea580c; }
+.solution-list li i.fa-check-circle { color: #16a34a; }
+.solution-list li i.fa-shield-alt   { color: #2563eb; }
+.solution-list li i.fa-clock        { color: #6b7280; }
+
+/* ---------- 示意图区域 ---------- */
+.illustration {
+    background: #ffffffea;
+    border-radius: 1.2rem;
+    padding: 1rem 1rem;
+    margin: 1.5rem 0 0.5rem 0;
+    border: 1px solid #e2edf7;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+}
+.illustration p.illus-title {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    color: #5c7c9e;
+    margin-bottom: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* 流程图行 */
+.diagram {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 0.6rem 1rem;
+    margin: 0.2rem 0;
+}
+
+/* 雪崩图: 上下结构 (过期key → DB) */
+.avalanche-diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+}
+.diagram-down {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #94a3b8;
+    font-size: 0.75rem;
+    line-height: 1.1;
+}
+.diagram-down .arrow-icon { font-size: 1.4rem; }
+.diagram-down span { margin-top: 2px; }
+
+/* 图元素 */
+.diagram-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #f1f5f9;
+    border-radius: 1rem;
+    padding: 0.5rem 0.8rem;
+    min-width: 70px;
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 500;
+}
+.diagram-item i {
+    font-size: 1.6rem;
+    margin-bottom: 5px;
+}
+.arrow-icon {
+    font-size: 1.3rem;
+    color: #94a3b8;
+}
+
+/* 解决方案徽章 */
+.badge-solution {
+    background: #eef2ff;
+    border-radius: 20px;
+    padding: 4px 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-top: 8px;
+    display: inline-block;
+    color: #1f3a6b;
+}
+
+/* 文字高亮 */
+.highlight-red {
+    color: #dc2626;
+    font-weight: 600;
+}
+.strike {
+    text-decoration: line-through;
+    color: #b91c1c;
+}
+
+/* ---------- 总结区域 ---------- */
+.summary-box {
+    margin-top: 3rem;
+    background: white;
+    border-radius: 2rem;
+    padding: 1.5rem 2rem;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+}
+.summary-box h3 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+}
+.summary-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    justify-content: space-between;
+    margin-top: 1rem;
+}
+.summary-grid .col {
+    flex: 1;
+    min-width: 180px;
+}
+.summary-grid .col .label {
+    font-size: 0.85rem;
+    color: #374151;
+}
+
+/* 分隔线 */
+hr {
+    margin: 1rem 0 0.2rem;
+    border: 0;
+    height: 1px;
+    background: linear-gradient(to right, #cbd5e1, transparent);
+}
+
+/* 页脚 */
+.footer-note {
+    text-align: center;
+    margin-top: 3rem;
+    font-size: 0.8rem;
+    color: #4b6f8c;
+    border-top: 1px solid rgba(100,116,139,0.2);
+    padding-top: 2rem;
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 700px) {
+    body { padding: 1rem; }
+    .card-header h2 { font-size: 1.4rem; }
+    .diagram-item { min-width: 60px; padding: 0.4rem 0.5rem; }
+    .arrow-icon { font-size: 1rem; }
+}
+
+/* ---------- 工具类 ---------- */
+.tooltip-info {
+    cursor: help;
+    border-bottom: 1px dashed #90a4c3;
+}

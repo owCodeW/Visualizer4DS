@@ -305,16 +305,20 @@ class BPlusTree:
     def delete(self, key: int) -> dict:
         """删除 key
 
-        注意: 为了保证可视化简洁, 叶子下溢时不做 rebalance,
-        允许节点保留少于 LEAF_MIN 的 key (结构仍是合法的 B+Tree, 只是非平衡).
-        根节点仍会收缩 (如果根是叶子且变空 -> 树空).
+        完整 B+Tree 删除流程:
+        1. 从根走到叶子, 记录路径
+        2. 在叶子中删除 key
+        3. 若叶子下溢 -> 借键 / 合并, 递归向上调整
         """
         if self.root is None:
             return {"ok": False, "log": [self._log("DELETE", f"key={key} -> 空树")]}
 
+        # 记录从根到叶子的路径: [(parent_node, child_index), ...]
+        path = []
         node = self.root
         while not isinstance(node, LeafNode):
             idx = self._find_child_index(node, key)
+            path.append((node, idx))
             node = node.children[idx]
         leaf = node
 
@@ -331,6 +335,20 @@ class BPlusTree:
             self._last_leaf = None
             self.height = 0
             log.append(self._log("DELETE", "根叶子变空 -> 树空"))
+            return {"ok": True, "log": log}
+
+        # 叶子下溢 -> 再平衡
+        if leaf.is_underflow() and path:
+            self._rebalance_after_delete(leaf, path, log)
+
+        # 根收缩: 如果根是内部节点且只剩 1 个 child
+        if isinstance(self.root, InternalNode) and len(self.root.children) == 1:
+            new_root = self.root.children[0]
+            old_root_id = self.root.id
+            self.root = new_root
+            self.height -= 1
+            log.append(self._log("SHRINK", f"根 {old_root_id} 只剩 1 个 child, 收缩为新根 {self._node_repr(new_root)} (height={self.height})"))
+
         return {"ok": True, "log": log}
 
     def _rebalance_after_delete(self, leaf: LeafNode, path: list[tuple], log: list[dict]) -> None:
@@ -388,14 +406,73 @@ class BPlusTree:
         log.append(self._log("MERGE", f"叶子 {self._node_repr(left)} 合并 {self._node_repr(right)}, 父 {self._node_repr(parent)} 减少 1 个 key"))
 
     def _rebalance_internal_after_delete(self, path: list[tuple], log: list[dict]) -> None:
-        """内部节点下溢处理 (简化: 暂时只处理顶层, 根节点会收缩)"""
-        # 根节点收缩: 如果根只有 1 个 child, 把 child 提为新根
-        if isinstance(self.root, InternalNode) and len(self.root.children) == 1:
-            new_root = self.root.children[0]
-            old_root_id = self.root.id
-            self.root = new_root
-            self.height -= 1
-            log.append(self._log("SHRINK", f"根 {old_root_id} 只剩 1 个 child, 收缩为新根 {self._node_repr(new_root)} (height={self.height})"))
+        """内部节点下溢处理: 递归向上借键 / 合并, 直到根节点"""
+        # 从最底层开始, 逐层向上处理
+        for level in range(len(path) - 1, -1, -1):
+            node, idx = path[level]
+            if not isinstance(node, InternalNode) or not node.is_underflow():
+                continue
+            # 根节点下溢由 delete 方法统一处理 (收缩)
+            if node is self.root:
+                break
+
+            parent, parent_idx = path[level - 1] if level > 0 else (None, -1)
+            if parent is None:
+                break
+
+            # 尝试从左兄弟借
+            if parent_idx > 0:
+                left_sib = parent.children[parent_idx - 1]
+                if isinstance(left_sib, InternalNode) and len(left_sib.children) > (FANOUT + 1) // 2:
+                    # 旋转: 左兄弟最后一个 child + 父节点分隔 key 下移
+                    sep_key = parent.keys[parent_idx - 1]
+                    borrowed_child = left_sib.children.pop()
+                    left_sib.keys.pop()  # 左兄弟最后一个 key 变成新的分隔 key
+                    new_sep = left_sib.keys.pop() if left_sib.keys else sep_key
+                    # 将分隔 key 插入到下溢节点的最前面
+                    node.keys.insert(0, sep_key)
+                    node.children.insert(0, borrowed_child)
+                    parent.keys[parent_idx - 1] = new_sep if left_sib.keys else node.keys[0]
+                    # 修正: 左兄弟借出后, 父节点分隔 key 应该是左兄弟新的最大 key
+                    if left_sib.keys:
+                        parent.keys[parent_idx - 1] = left_sib.keys[-1]
+                    else:
+                        parent.keys[parent_idx - 1] = node.keys[0]
+                    log.append(self._log("REBALANCE", f"内部 {self._node_repr(node)} 从左兄弟 {self._node_repr(left_sib)} 借 1 个 child"))
+                    continue
+
+            # 尝试从右兄弟借
+            if parent_idx + 1 < len(parent.children):
+                right_sib = parent.children[parent_idx + 1]
+                if isinstance(right_sib, InternalNode) and len(right_sib.children) > (FANOUT + 1) // 2:
+                    sep_key = parent.keys[parent_idx]
+                    borrowed_child = right_sib.children.pop(0)
+                    right_sib.keys.pop(0)
+                    node.keys.append(sep_key)
+                    node.children.append(borrowed_child)
+                    parent.keys[parent_idx] = right_sib.keys[0] if right_sib.keys else node.keys[-1]
+                    log.append(self._log("REBALANCE", f"内部 {self._node_repr(node)} 从右兄弟 {self._node_repr(right_sib)} 借 1 个 child"))
+                    continue
+
+            # 都没法借 -> 合并
+            if parent_idx > 0:
+                left_sib = parent.children[parent_idx - 1]
+                self._merge_internals(left_sib, node, parent, parent_idx, log)
+            else:
+                right_sib = parent.children[parent_idx + 1]
+                self._merge_internals(node, right_sib, parent, parent_idx + 1, log)
+
+            # 合并后父节点可能下溢, 继续循环处理上一层
+
+    def _merge_internals(self, left: InternalNode, right: InternalNode,
+                         parent: InternalNode, right_idx: int, log: list[dict]) -> None:
+        """合并两个内部节点: 父节点的分隔 key 下移到合并后的节点"""
+        sep_key = parent.keys.pop(right_idx - 1)
+        left.keys.append(sep_key)
+        left.keys.extend(right.keys)
+        left.children.extend(right.children)
+        parent.children.pop(right_idx)
+        log.append(self._log("MERGE", f"内部 {self._node_repr(left)} 合并 {self._node_repr(right)}, 父分隔 key={sep_key} 下移"))
 
     # ============================ 工具 ============================
     def _new_leaf(self) -> LeafNode:
