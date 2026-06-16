@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>MySQL 8.0 SQL 执行流程可视化</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        /* SQL 执行流程专用样式 */
+        .sql-console {
+            max-width: 1400px;
+            margin: 0 auto 20px;
+            padding: 14px 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 6px #ddd;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        #sql-input {
+            flex: 1;
+            min-width: 300px;
+            padding: 10px 14px;
+            border: 2px solid #cbd5e0;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: Consolas, monospace;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        #sql-input:focus {
+            border-color: #00758f;
+        }
+
+        #run-btn {
+            padding: 10px 22px;
+            background: #00758f;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        #run-btn:hover { background: #005f73; }
+        #run-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+
+        .sql-type-badge {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            color: #fff;
+            display: none;
+        }
+
+        /* 主流程区域 */
+        .flow-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        /* 左侧流程图 */
+        .flow-chart {
+            flex: 1;
+            min-width: 0;
+            position: relative;
+        }
+
+        /* 阶段卡片 */
+        .stage {
+            background: #fff;
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-bottom: 6px;
+            border: 2px solid #e2e8f0;
+            transition: all 0.4s ease;
+            position: relative;
+        }
+
+        .stage.active {
+            border-color: #00758f;
+            background: #f0fdfa;
+            box-shadow: 0 0 0 3px rgba(0, 117, 143, 0.2);
+        }
+
+        .stage.completed {
+            border-color: #059669;
+            background: #f0fdf4;
+        }
+
+        .stage-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 6px;
+        }
+
+        .stage-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 16px;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .stage-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .stage-subtitle {
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .stage-badge {
+            margin-left: auto;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        .stage.active .stage-badge {
+            background: #00758f;
+            color: #fff;
+        }
+
+        .stage.completed .stage-badge {
+            background: #059669;
+            color: #fff;
+        }
+
+        /* 阶段详情 (折叠/展开) */
+        .stage-detail {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, padding 0.4s ease;
+            padding: 0;
+        }
+
+        .stage.active .stage-detail,
+        .stage.detail-open .stage-detail {
+            max-height: 500px;
+            padding-top: 10px;
+        }
+
+        /* 折叠切换箭头 */
+        .stage-toggle {
+            margin-left: 6px;
+            cursor: pointer;
+            color: #94a3b8;
+            font-size: 12px;
+            transition: transform 0.3s ease, color 0.3s;
+            user-select: none;
+            display: none;
+        }
+
+        .stage.completed .stage-toggle {
+            display: inline-block;
+            color: #059669;
+        }
+
+        .stage.detail-open .stage-toggle {
+            transform: rotate(90deg);
+        }
+
+        .stage-header {
+            cursor: default;
+        }
+
+        .stage.completed .stage-header {
+            cursor: pointer;
+        }
+
+        .detail-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 5px 0;
+            font-size: 13px;
+            color: #475569;
+            line-height: 1.5;
+        }
+
+        .detail-step .step-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #94a3b8;
+            margin-top: 6px;
+            flex-shrink: 0;
+        }
+
+        .stage.active .detail-step .step-dot {
+            background: #00758f;
+        }
+
+        .stage.completed .detail-step .step-dot {
+            background: #059669;
+        }
+
+        .detail-step code {
+            background: #f1f5f9;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 12px;
+            color: #00758f;
+        }
+
+        /* 连接箭头 */
+        .stage-arrow {
+            text-align: center;
+            padding: 2px 0;
+            color: #cbd5e0;
+            font-size: 18px;
+            transition: color 0.4s;
+        }
+
+        .stage-arrow.active {
+            color: #00758f;
+        }
+
+        /* 右侧信息面板 */
+        .info-panel {
+            flex: 0 0 340px;
+            min-width: 300px;
+            position: sticky;
+            top: 20px;
+        }
+
+        .info-card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 6px #ddd;
+            margin-bottom: 14px;
+            overflow: hidden;
+        }
+
+        .info-card-header {
+            padding: 10px 14px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 14px;
+            font-weight: 700;
+            color: #1e293b;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .info-card-body {
+            padding: 12px 14px;
+            font-size: 13px;
+            color: #475569;
+            line-height: 1.7;
+        }
+
+        .info-card-body .kv-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            border-bottom: 1px dashed #f1f5f9;
+        }
+
+        .info-card-body .kv-key {
+            color: #64748b;
+        }
+
+        .info-card-body .kv-val {
+            font-weight: 600;
+            color: #1e293b;
+            font-family: Consolas, monospace;
+        }
+
+        /* 执行计划表格 */
+        .plan-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .plan-table th {
+            background: #f1f5f9;
+            padding: 6px 8px;
+            text-align: left;
+            color: #475569;
+            font-weight: 600;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .plan-table td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #334155;
+        }
+
+        .plan-table .highlight-cell {
+            color: #00758f;
+            font-weight: 600;
+        }
+
+        /* 结果区域 */
+        .result-area {
+            max-width: 1400px;
+            margin: 20px auto 0;
+            padding: 14px 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 6px #ddd;
+            border: 2px solid #e2e8f0;
+            text-align: center;
+            font-size: 14px;
+            color: #94a3b8;
+            transition: all 0.4s ease;
+        }
+
+        .result-area.active {
+            border-color: #059669;
+            background: #f0fdf4;
+            color: #064e3b;
+            font-weight: 600;
+        }
+
+        /* 流动动画指示器 */
+        .flow-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00758f;
+            margin-right: 6px;
+            animation: pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        .stage.completed .flow-indicator {
+            background: #059669;
+            animation: none;
+        }
+
+        /* 速度控制 */
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .speed-control input[type="range"] {
+            width: 80px;
+        }
+
+        /* 日志 */
+        .exec-log {
+            max-height: 120px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="navBar"></div>
+
+    <h1 class="page-title">MySQL 8.0 SQL 执行流程可视化</h1>
+    <p class="page-desc">一条 SQL 从客户端发送到结果返回的完整生命周期 — 连接 / 解析 / 优化 / 执行 / 存储</p>
+
+    <!-- SQL 输入控制台 -->
+    <div class="sql-console">
+        <input type="text" id="sql-input" value="SELECT name FROM users WHERE id = 1;" placeholder="输入 SQL 语句...">
+        <button id="run-btn">执行 SQL 并查看流向</button>
+        <span class="sql-type-badge" id="sqlTypeBadge"></span>
+        <div class="speed-control">
+            <span>速度:</span>
+            <input type="range" id="speedSlider" min="200" max="1500" value="600" step="100">
+            <span id="speedLabel">600ms</span>
+        </div>
+    </div>
+
+    <div class="encoding-bar">
+        <div class="enc-item">
+            <span class="enc-label">类型:</span>
+            <span class="enc-value" style="background:#00758f;">SQL Execution Flow</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">SQL 类型:</span>
+            <span id="sqlType">--</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">当前阶段:</span>
+            <span id="currentStage">等待执行</span>
+        </div>
+        <div class="enc-item">
+            <span class="enc-label">耗时:</span>
+            <span id="execTime">--</span>
+        </div>
+    </div>
+
+    <!-- 主流程区域 -->
+    <div class="flow-container">
+        <!-- 左侧流程图 -->
+        <div class="flow-chart" id="flowChart">
+
+            <!-- 1. 客户端 -->
+            <div class="stage" id="stage-client">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#6366f1;">C</div>
+                    <div>
+                        <div class="stage-title">客户端 (Client)</div>
+                        <div class="stage-subtitle">发送 SQL 请求</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span>客户端通过 <code>TCP</code> 连接向 MySQL Server 发送 SQL 文本</div>
+                    <div class="detail-step"><span class="step-dot"></span>使用 <code>mysql_real_query()</code> 或命令行发送请求</div>
+                    <div class="detail-step"><span class="step-dot"></span>通信协议: 支持压缩、SSL 加密传输</div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-1">&#9660;</div>
+
+            <!-- 2. 连接器 -->
+            <div class="stage" id="stage-connector">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#3b82f6;">1</div>
+                    <div>
+                        <div class="stage-title">连接器 (Connector)</div>
+                        <div class="stage-subtitle">连接管理 & 权限校验</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span>检查连接是否有效, 超时则断开 (<code>wait_timeout</code>=28800s)</div>
+                    <div class="detail-step"><span class="step-dot"></span>验证用户名密码: 查询 <code>mysql.user</code> 表</div>
+                    <div class="detail-step"><span class="step-dot"></span>加载权限信息到内存: <code>SELECT * FROM mysql.user WHERE user=?</code></div>
+                    <div class="detail-step"><span class="step-dot"></span>此后该连接的权限判断均使用此快照 (修改权限需重连)</div>
+                    <div class="detail-step"><span class="step-dot"></span>连接模式: 长连接 / 短连接, 支持连接池</div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-2">&#9660;</div>
+
+            <!-- 3. 查询缓存 (8.0已移除, 但展示说明) -->
+            <div class="stage" id="stage-cache">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#94a3b8;">2</div>
+                    <div>
+                        <div class="stage-title">查询缓存 (Query Cache) <span style="color:#dc2626;font-size:11px;">8.0 已移除</span></div>
+                        <div class="stage-subtitle">MySQL 8.0 跳过此步骤</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">跳过</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span>MySQL 5.7 及之前: 以 SQL 为 key 查缓存, 命中则直接返回</div>
+                    <div class="detail-step"><span class="step-dot"></span>移除原因: 表更新导致缓存频繁失效, 高并发下锁竞争严重</div>
+                    <div class="detail-step"><span class="step-dot"></span>替代方案: 使用 Redis / 应用层缓存</div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-3">&#9660;</div>
+
+            <!-- 4. 解析器 -->
+            <div class="stage" id="stage-parser">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#8b5cf6;">3</div>
+                    <div>
+                        <div class="stage-title">解析器 (Parser)</div>
+                        <div class="stage-subtitle">词法分析 & 语法分析</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span><b>词法分析</b>: 将 SQL 文本拆分为 Token 序列</div>
+                    <div class="detail-step"><span class="step-dot"></span>识别关键字: <code>SELECT</code> <code>FROM</code> <code>WHERE</code></div>
+                    <div class="detail-step"><span class="step-dot"></span>识别标识符: 表名 <code>users</code>, 列名 <code>name</code> <code>id</code></div>
+                    <div class="detail-step"><span class="step-dot"></span><b>语法分析</b>: 根据 MySQL 语法规则构建 <b>解析树 (Parse Tree)</b></div>
+                    <div class="detail-step"><span class="step-dot"></span>语法错误则返回: <code>ERROR 1064: You have an error in your SQL syntax</code></div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-4">&#9660;</div>
+
+            <!-- 5. 预处理器 -->
+            <div class="stage" id="stage-preprocessor">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#d97706;">4</div>
+                    <div>
+                        <div class="stage-title">预处理器 (Preprocessor)</div>
+                        <div class="stage-subtitle">语义检查 & 查询重写</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span>检查表 <code>users</code> 是否存在, 列 <code>name</code> <code>id</code> 是否属于该表</div>
+                    <div class="detail-step"><span class="step-dot"></span>解析 <code>*</code> 为所有列名, 解析别名</div>
+                    <div class="detail-step"><span class="step-dot"></span><b>二次权限校验</b>: 检查用户对 <code>users</code> 表是否有 <code>SELECT</code> 权限</div>
+                    <div class="detail-step"><span class="step-dot"></span><b>查询重写</b>: 视图展开、子查询扁平化、常量折叠</div>
+                    <div class="detail-step"><span class="step-dot"></span>错误返回: <code>ERROR 1146: Table 'db.users' doesn't exist</code></div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-5">&#9660;</div>
+
+            <!-- 6. 优化器 -->
+            <div class="stage" id="stage-optimizer">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#f59e0b;">5</div>
+                    <div>
+                        <div class="stage-title">优化器 (Optimizer)</div>
+                        <div class="stage-subtitle">选择执行计划 & 索引优化</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span><b>基于代价的优化 (CBO)</b>: 计算不同执行计划的 IO/CPU 代价</div>
+                    <div class="detail-step"><span class="step-dot"></span>选择索引: <code>PRIMARY KEY</code> vs <code>idx_id</code> vs 全表扫描</div>
+                    <div class="detail-step"><span class="step-dot"></span>决定连接顺序 (多表 JOIN), 选择驱动表</div>
+                    <div class="detail-step"><span class="step-dot"></span>优化策略: 索引下推 (ICP)、MRR、范围优化</div>
+                    <div class="detail-step"><span class="step-dot"></span>输出 <b>执行计划</b>: 可用 <code>EXPLAIN</code> 查看</div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-6">&#9660;</div>
+
+            <!-- 7. 执行器 -->
+            <div class="stage" id="stage-executor">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#dc2626;">6</div>
+                    <div>
+                        <div class="stage-title">执行器 (Executor)</div>
+                        <div class="stage-subtitle">调用存储引擎 API & 迭代器模型</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span>根据执行计划调用存储引擎接口</div>
+                    <div class="detail-step"><span class="step-dot"></span><b>读操作</b>: 调用 <code>ha_innobase::index_read()</code> / <code>rnd_next()</code></div>
+                    <div class="detail-step"><span class="step-dot"></span><b>写操作</b>: 调用 <code>ha_innobase::write_row()</code> / <code>update_row()</code></div>
+                    <div class="detail-step"><span class="step-dot"></span>权限最终校验: 行级权限检查 (WHERE 条件过滤)</div>
+                    <div class="detail-step"><span class="step-dot"></span>使用 <b>Volcano 迭代器模型</b>: <code>open() → next() → close()</code></div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-7">&#9660;</div>
+
+            <!-- 8. 存储引擎层 -->
+            <div class="stage" id="stage-engine">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#059669;">7</div>
+                    <div>
+                        <div class="stage-title">存储引擎层 (InnoDB)</div>
+                        <div class="stage-subtitle">数据读写 & 事务 & 日志</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span><b>Buffer Pool</b>: 先查内存缓冲池, 命中则直接读取 (命中率 > 99%)</div>
+                    <div class="detail-step"><span class="step-dot"></span>未命中则从磁盘数据文件加载 <code>.ibd</code> 页到 Buffer Pool</div>
+                    <div class="detail-step"><span class="step-dot"></span><b>写操作</b>: 修改 Buffer Pool 中的页 (脏页), 记录 <code>Redo Log</code></div>
+                    <div class="detail-step"><span class="step-dot"></span><b>Undo Log</b>: 记录数据修改前的旧值, 支持回滚和 MVCC</div>
+                    <div class="detail-step"><span class="step-dot"></span><b>WAL 机制</b>: 先写 Redo Log, 再写数据页 (Crash Safe)</div>
+                    <div class="detail-step"><span class="step-dot"></span>脏页异步刷盘: 由后台线程按 LRU / Flush List 策略刷新</div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-8">&#9660;</div>
+
+            <!-- 9. Binlog (写操作) -->
+            <div class="stage" id="stage-binlog">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#0ea5e9;">8</div>
+                    <div>
+                        <div class="stage-title">Binlog (归档日志)</div>
+                        <div class="stage-subtitle">主从复制 & 数据恢复 (仅写操作)</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span>执行器在事务提交时写入 Binlog (Server 层)</div>
+                    <div class="detail-step"><span class="step-dot"></span><b>两阶段提交</b>: 先写 Redo Log (prepare) → 写 Binlog → Redo Log (commit)</div>
+                    <div class="detail-step"><span class="step-dot"></span>保证主从数据一致性: 从库通过 <code>IO Thread</code> 拉取 Binlog 回放</div>
+                    <div class="detail-step"><span class="step-dot"></span>格式: <code>ROW</code> (行变更) / <code>STATEMENT</code> (SQL 文本) / <code>MIXED</code></div>
+                </div>
+            </div>
+            <div class="stage-arrow" id="arrow-9">&#9660;</div>
+
+            <!-- 10. 返回结果 -->
+            <div class="stage" id="stage-result">
+                <div class="stage-header" onclick="toggleStageDetail(this)">
+                    <div class="stage-icon" style="background:#059669;">R</div>
+                    <div>
+                        <div class="stage-title">返回结果 (Result)</div>
+                        <div class="stage-subtitle">结果集 / 影响行数返回客户端</div>
+                    </div>
+                    <span class="stage-toggle">&#9654;</span>
+                    <span class="stage-badge">等待</span>
+                </div>
+                <div class="stage-detail">
+                    <div class="detail-step"><span class="step-dot"></span><b>读操作</b>: 逐行返回结果集, 客户端按协议解析</div>
+                    <div class="detail-step"><span class="step-dot"></span><b>写操作</b>: 返回影响行数 <code>affected rows</code></div>
+                    <div class="detail-step"><span class="step-dot"></span>释放锁资源: 行锁、间隙锁、自增锁等</div>
+                    <div class="detail-step"><span class="step-dot"></span>连接保持: 长连接不断开, 等待下一条 SQL</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧信息面板 -->
+        <div class="info-panel">
+            <!-- SQL 解析信息 -->
+            <div class="info-card">
+                <div class="info-card-header">SQL 解析信息</div>
+                <div class="info-card-body" id="sqlInfo">
+                    <div style="color:#94a3b8;text-align:center;padding:20px;">等待执行 SQL...</div>
+                </div>
+            </div>
+
+            <!-- 执行计划 -->
+            <div class="info-card">
+                <div class="info-card-header">执行计划 (EXPLAIN)</div>
+                <div class="info-card-body" id="planInfo">
+                    <div style="color:#94a3b8;text-align:center;padding:20px;">执行后展示</div>
+                </div>
+            </div>
+
+            <!-- 事务/锁信息 -->
+            <div class="info-card">
+                <div class="info-card-header">事务 & 锁信息</div>
+                <div class="info-card-body" id="lockInfo">
+                    <div style="color:#94a3b8;text-align:center;padding:20px;">执行后展示</div>
+                </div>
+            </div>
+
+            <!-- 操作日志 -->
+            <div class="info-card">
+                <div class="info-card-header">执行日志</div>
+                <div class="info-card-body exec-log" id="execLog">
+                    <div style="color:#94a3b8;">等待操作...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 结果区域 -->
+    <div class="result-area" id="resultArea">
+        等待 SQL 执行结果...
+    </div>
+
+    <script src="/static/api.js"></script>
+    <script>
+    document.getElementById('navBar').innerHTML = createNavBar();
+
+    // ===================== DOM 元素 =====================
+    const runBtn = document.getElementById('run-btn');
+    const sqlInput = document.getElementById('sql-input');
+    const resultArea = document.getElementById('resultArea');
+    const sqlTypeBadge = document.getElementById('sqlTypeBadge');
+    const speedSlider = document.getElementById('speedSlider');
+    const speedLabel = document.getElementById('speedLabel');
+
+    // 所有阶段
+    const stageIds = [
+        'stage-client', 'stage-connector', 'stage-cache', 'stage-parser',
+        'stage-preprocessor', 'stage-optimizer', 'stage-executor',
+        'stage-engine', 'stage-binlog', 'stage-result'
+    ];
+
+    // 箭头
+    const arrowIds = ['arrow-1','arrow-2','arrow-3','arrow-4','arrow-5','arrow-6','arrow-7','arrow-8','arrow-9'];
+
+    // 速度控制
+    speedSlider.addEventListener('input', () => {
+        speedLabel.textContent = speedSlider.value + 'ms';
+    });
+
+    function getDelay() {
+        return parseInt(speedSlider.value) || 600;
+    }
+
+    // ===================== SQL 解析 =====================
+    function parseSQL(sql) {
+        const trimmed = sql.trim().toUpperCase();
+        let type = 'UNKNOWN';
+        let isWrite = false;
+        let table = '--';
+        let where = '--';
+        let index = '--';
+        let lockType = '无';
+        let planRows = [];
+
+        if (/^SELECT/.test(trimmed)) {
+            type = 'SELECT';
+            isWrite = false;
+            lockType = '共享锁 (S) / 无锁 (MVCC)';
+        } else if (/^INSERT/.test(trimmed)) {
+            type = 'INSERT';
+            isWrite = true;
+            lockType = '排他锁 (X) + 自增锁';
+        } else if (/^UPDATE/.test(trimmed)) {
+            type = 'UPDATE';
+            isWrite = true;
+            lockType = '排他锁 (X) + 间隙锁';
+        } else if (/^DELETE/.test(trimmed)) {
+            type = 'DELETE';
+            isWrite = true;
+            lockType = '排他锁 (X) + 间隙锁';
+        } else if (/^CREATE/.test(trimmed)) {
+            type = 'CREATE';
+            isWrite = true;
+            lockType = '元数据锁 (MDL)';
+        } else if (/^ALTER/.test(trimmed)) {
+            type = 'ALTER';
+            isWrite = true;
+            lockType = '元数据锁 (MDL)';
+        } else if (/^DROP/.test(trimmed)) {
+            type = 'DROP';
+            isWrite = true;
+            lockType = '元数据锁 (MDL)';
+        }
+
+        // 提取表名
+        const fromMatch = sql.match(/FROM\s+(\w+)/i);
+        const intoMatch = sql.match(/INTO\s+(\w+)/i);
+        const updateMatch = sql.match(/UPDATE\s+(\w+)/i);
+        const tableMatch = sql.match(/TABLE\s+(\w+)/i);
+        table = fromMatch?.[1] || intoMatch?.[1] || updateMatch?.[1] || tableMatch?.[1] || '--';
+
+        // 提取 WHERE
+        const whereMatch = sql.match(/WHERE\s+(.+?)(?:\s*(?:GROUP|ORDER|LIMIT|HAVING|$))/i);
+        where = whereMatch?.[1] || '--';
+
+        // 索引推测
+        if (where !== '--') {
+            if (/id\s*=/.test(sql)) index = 'PRIMARY KEY (聚簇索引)';
+            else if (/name\s*=/.test(sql)) index = 'idx_name (二级索引) → 回表';
+            else if (/id\s*>|id\s*</.test(sql)) index = 'PRIMARY KEY (范围扫描)';
+            else index = '全表扫描 (无可用索引)';
+        } else {
+            index = type === 'SELECT' ? '全表扫描' : '--';
+        }
+
+        // 模拟执行计划
+        if (type === 'SELECT') {
+            planRows = [
+                { id: 1, selectType: 'SIMPLE', table: table, type: where !== '--' ? 'const' : 'ALL', key: where !== '--' ? 'PRIMARY' : null, rows: where !== '--' ? '1' : '~1000', extra: where !== '--' ? '' : 'Using where' },
+            ];
+        } else if (type === 'UPDATE') {
+            planRows = [
+                { id: 1, selectType: 'UPDATE', table: table, type: 'range', key: 'PRIMARY', rows: '1', extra: 'Using where' },
+            ];
+        } else if (type === 'INSERT') {
+            planRows = [
+                { id: 1, selectType: 'INSERT', table: table, type: 'ALL', key: null, rows: '1', extra: '' },
+            ];
+        } else if (type === 'DELETE') {
+            planRows = [
+                { id: 1, selectType: 'DELETE', table: table, type: 'range', key: 'PRIMARY', rows: '1', extra: 'Using where' },
+            ];
+        }
+
+        return { type, isWrite, table, where, index, lockType, planRows };
+    }
+
+    // ===================== 渲染信息面板 =====================
+    function renderSQLInfo(info) {
+        document.getElementById('sqlInfo').innerHTML = `
+            <div class="kv-row"><span class="kv-key">SQL 类型</span><span class="kv-val">${info.type}</span></div>
+            <div class="kv-row"><span class="kv-key">读/写</span><span class="kv-val" style="color:${info.isWrite ? '#dc2626' : '#059669'}">${info.isWrite ? '写操作 (DML/DDL)' : '读操作 (DQL)'}</span></div>
+            <div class="kv-row"><span class="kv-key">目标表</span><span class="kv-val">${info.table}</span></div>
+            <div class="kv-row"><span class="kv-key">WHERE 条件</span><span class="kv-val">${info.where}</span></div>
+            <div class="kv-row"><span class="kv-key">推测索引</span><span class="kv-val" style="color:#00758f">${info.index}</span></div>
+        `;
+    }
+
+    function renderPlanInfo(info) {
+        if (!info.planRows || info.planRows.length === 0) {
+            document.getElementById('planInfo').innerHTML = '<div style="color:#94a3b8;text-align:center;">无执行计划</div>';
+            return;
+        }
+        const rows = info.planRows.map(r => `
+            <tr>
+                <td>${r.id}</td>
+                <td>${r.selectType}</td>
+                <td class="highlight-cell">${r.table}</td>
+                <td>${r.type || '--'}</td>
+                <td>${r.key || '<span style="color:#dc2626">NULL</span>'}</td>
+                <td>${r.rows}</td>
+                <td>${r.extra || '--'}</td>
+            </tr>
+        `).join('');
+        document.getElementById('planInfo').innerHTML = `
+            <table class="plan-table">
+                <tr><th>id</th><th>select_type</th><th>table</th><th>type</th><th>key</th><th>rows</th><th>Extra</th></tr>
+                ${rows}
+            </table>
+        `;
+    }
+
+    function renderLockInfo(info) {
+        document.getElementById('lockInfo').innerHTML = `
+            <div class="kv-row"><span class="kv-key">锁类型</span><span class="kv-val" style="color:${info.isWrite ? '#dc2626' : '#059669'}">${info.lockType}</span></div>
+            <div class="kv-row"><span class="kv-key">事务隔离级别</span><span class="kv-val">REPEATABLE READ</span></div>
+            <div class="kv-row"><span class="kv-key">MVCC</span><span class="kv-val">${info.isWrite ? '写操作不加 MVCC' : '快照读使用 MVCC'}</span></div>
+            <div class="kv-row"><span class="kv-key">Redo Log</span><span class="kv-val">${info.isWrite ? '记录物理变更' : '不记录'}</span></div>
+            <div class="kv-row"><span class="kv-key">Undo Log</span><span class="kv-val">${info.isWrite ? '记录旧值 (回滚用)' : '提供快照读'}</span></div>
+            <div class="kv-row"><span class="kv-key">Binlog</span><span class="kv-val">${info.isWrite ? '记录 (两阶段提交)' : '不记录'}</span></div>
+        `;
+    }
+
+    // ===================== 日志 =====================
+    const execLogEl = document.getElementById('execLog');
+    let logInitialized = false;
+
+    function writeExecLog(text) {
+        if (!logInitialized) {
+            execLogEl.innerHTML = '';
+            logInitialized = true;
+        }
+        const now = new Date().toLocaleTimeString();
+        execLogEl.innerHTML += `<div style="margin:2px 0;"><span style="color:#00758f;font-weight:600;">[${now}]</span> ${text}</div>`;
+        execLogEl.scrollTop = execLogEl.scrollHeight;
+    }
+
+    // ===================== 折叠/展开详情 =====================
+    function toggleStageDetail(headerEl) {
+        const stage = headerEl.closest('.stage');
+        if (!stage.classList.contains('completed')) return;
+        stage.classList.toggle('detail-open');
+    }
+
+    // ===================== 重置所有阶段 =====================
+    function resetAll() {
+        stageIds.forEach(id => {
+            const el = document.getElementById(id);
+            el.classList.remove('active', 'completed', 'detail-open');
+            el.querySelector('.stage-badge').textContent = '等待';
+        });
+        arrowIds.forEach(id => {
+            document.getElementById(id).classList.remove('active');
+        });
+        resultArea.classList.remove('active');
+        resultArea.textContent = '等待 SQL 执行结果...';
+        document.getElementById('currentStage').textContent = '等待执行';
+        document.getElementById('execTime').textContent = '--';
+        logInitialized = false;
+        execLogEl.innerHTML = '<div style="color:#94a3b8;">等待操作...</div>';
+    }
+
+    // ===================== 激活阶段 =====================
+    async function activateStage(index, stageName, logText) {
+        const el = document.getElementById(stageIds[index]);
+        el.classList.remove('detail-open');
+        el.classList.add('active');
+        el.querySelector('.stage-badge').textContent = '执行中';
+
+        // 激活上方箭头
+        if (index > 0 && index - 1 < arrowIds.length) {
+            document.getElementById(arrowIds[index - 1]).classList.add('active');
+        }
+
+        document.getElementById('currentStage').textContent = stageName;
+        writeExecLog(`<b>${stageName}</b> — ${logText}`);
+
+        await delay(getDelay());
+
+        el.classList.remove('active');
+        el.classList.add('completed');
+        el.querySelector('.stage-badge').textContent = '完成';
+        // 完成后折叠详情, 用户可手动点击展开
+    }
+
+    function delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // ===================== 主执行流程 =====================
+    async function startFlow() {
+        runBtn.disabled = true;
+        resetAll();
+
+        const sql = sqlInput.value.trim();
+        if (!sql) {
+            runBtn.disabled = false;
+            return;
+        }
+
+        const info = parseSQL(sql);
+
+        // 显示 SQL 类型
+        sqlTypeBadge.style.display = 'inline-block';
+        sqlTypeBadge.textContent = info.type;
+        sqlTypeBadge.style.background = info.isWrite ? '#dc2626' : '#059669';
+        document.getElementById('sqlType').textContent = `${info.type} (${info.isWrite ? '写' : '读'})`;
+
+        // 渲染右侧面板
+        renderSQLInfo(info);
+        renderPlanInfo(info);
+        renderLockInfo(info);
+
+        const startTime = Date.now();
+
+        // 1. 客户端
+        await activateStage(0, '客户端', '发送 SQL: ' + sql.substring(0, 60) + (sql.length > 60 ? '...' : ''));
+
+        // 2. 连接器
+        await activateStage(1, '连接器', '验证用户权限, 加载权限快照');
+
+        // 3. 查询缓存 (8.0 跳过)
+        const cacheEl = document.getElementById(stageIds[2]);
+        cacheEl.classList.add('completed');
+        cacheEl.querySelector('.stage-badge').textContent = '跳过';
+        document.getElementById(arrowIds[2]).classList.add('active');
+        writeExecLog('<b>查询缓存</b> — MySQL 8.0 已移除, 跳过');
+        await delay(200);
+
+        // 4. 解析器
+        await activateStage(3, '解析器', '词法分析 → 语法分析 → 生成解析树');
+
+        // 5. 预处理器
+        await activateStage(4, '预处理器', `检查表 ${info.table} 存在性, 列权限校验, 查询重写`);
+
+        // 6. 优化器
+        await activateStage(5, '优化器', `选择索引: ${info.index}, 生成执行计划`);
+
+        // 7. 执行器
+        await activateStage(6, '执行器', `调用 InnoDB 引擎 API, 迭代器模型执行`);
+
+        // 8. 存储引擎
+        await activateStage(7, '存储引擎', 'Buffer Pool 查询 → 磁盘读取 → Redo/Undo Log');
+
+        // 9. Binlog (仅写操作)
+        if (info.isWrite) {
+            await activateStage(8, 'Binlog', '两阶段提交: Redo Log prepare → Binlog → Redo Log commit');
+        } else {
+            const binlogEl = document.getElementById(stageIds[8]);
+            binlogEl.classList.add('completed');
+            binlogEl.querySelector('.stage-badge').textContent = '跳过';
+            writeExecLog('<b>Binlog</b> — 读操作不记录 Binlog, 跳过');
+            await delay(200);
+        }
+
+        // 10. 返回结果
+        await activateStage(9, '返回结果', info.isWrite ? '返回影响行数, 释放锁' : '逐行返回结果集');
+
+        // 完成
+        const elapsed = Date.now() - startTime;
+        document.getElementById('execTime').textContent = elapsed + 'ms';
+        document.getElementById('currentStage').textContent = '执行完成';
+
+        resultArea.classList.add('active');
+        resultArea.textContent = info.isWrite
+            ? `执行完成: ${info.type} 操作成功, 数据已更新 + 日志落盘 (模拟耗时 ${elapsed}ms)`
+            : `查询完成: 结果集返回客户端 (模拟耗时 ${elapsed}ms)`;
+
+        writeExecLog(`<b style="color:#059669;">执行完成</b> — 总耗时 ${elapsed}ms`);
+
+        runBtn.disabled = false;
+    }
+
+    // ===================== 事件绑定 =====================
+    runBtn.addEventListener('click', startFlow);
+
+    sqlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') startFlow();
+    });
+    </script>
+</body>
+</html>

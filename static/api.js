@@ -141,6 +141,7 @@ function createNavBar() {
         <a href="/categories/redis/pages/cache_issues.html" class="cache">缓存三大问题</a>
         <span class="nav-sep">|</span>
         <a href="/categories/mysql/pages/bptree.html" class="mysql">B+Tree</a>
+        <a href="/categories/mysql/pages/sql_execution.html" class="mysql">SQL Flow</a>
     </div>`;
 }
 
