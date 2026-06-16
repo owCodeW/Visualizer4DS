@@ -20,9 +20,11 @@ from categories.registry import CategoryInfo, TypeInfo, register_category, regis
 
 # ---- 1. 合并所有 API 子路由 ----
 from .api.bptree_api import router as bptree_router
+from .api.sql_execution_api import router as sql_exec_router
 
 router = APIRouter()
 router.include_router(bptree_router)
+router.include_router(sql_exec_router)
 
 # ---- 2. 注册分类元信息 ----
 _mysql = CategoryInfo(
@@ -46,6 +48,17 @@ register_type("mysql", TypeInfo(
     api_prefix="/api/mysql/bptree",
     icon="B+",
     color="#00758f",
+    status="active",
+))
+
+register_type("mysql", TypeInfo(
+    name="SQL Execution Flow",
+    description="一条 SQL 从客户端到结果返回的完整生命周期: 连接/解析/优化/执行/存储",
+    encodings=["Parser", "Optimizer", "Executor", "InnoDB"],
+    page_path="/categories/mysql/pages/sql_execution.html",
+    api_prefix="/api/mysql/sql-exec",
+    icon="SQL",
+    color="#3b82f6",
     status="active",
 ))
 
