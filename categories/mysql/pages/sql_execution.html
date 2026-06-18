@@ -49,6 +49,31 @@
         #run-btn:hover { background: #005f73; }
         #run-btn:disabled { background: #94a3b8; cursor: not-allowed; }
 
+        /* 固定SQL按钮组 */
+        .preset-btn {
+            padding: 10px 22px;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .preset-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .preset-btn:disabled { background: #94a3b8 !important; cursor: not-allowed; opacity: 0.6; transform: none; }
+        .preset-btn.select-btn { background: #059669; }
+        .preset-btn.update-btn { background: #dc2626; }
+        .preset-btn .sql-text {
+            font-family: Consolas, monospace;
+            font-size: 12px;
+            background: rgba(255,255,255,0.2);
+            padding: 2px 8px;
+            border-radius: 3px;
+        }
+
         .sql-type-badge {
             padding: 4px 12px;
             border-radius: 4px;
@@ -387,8 +412,14 @@
 
     <!-- SQL 输入控制台 -->
     <div class="sql-console">
-        <input type="text" id="sql-input" value="SELECT name FROM users WHERE id = 1;" placeholder="输入 SQL 语句...">
-        <button id="run-btn">执行 SQL 并查看流向</button>
+        <button class="preset-btn select-btn" id="selectBtn">
+            <span>执行 SELECT</span>
+            <span class="sql-text">SELECT name FROM users WHERE id = 1;</span>
+        </button>
+        <button class="preset-btn update-btn" id="updateBtn">
+            <span>执行 UPDATE</span>
+            <span class="sql-text">UPDATE users SET name='Alice' WHERE id=1;</span>
+        </button>
         <span class="sql-type-badge" id="sqlTypeBadge"></span>
         <div class="speed-control">
             <span>速度:</span>
@@ -652,6 +683,16 @@
                 </div>
             </div>
 
+            <!-- 日志触发状态变化 (仅写操作显示) -->
+            <div class="info-card" id="logCard" style="display:none;">
+                <div class="info-card-header">
+                    <span>日志触发状态变化</span>
+                    <button id="crashBtn" style="margin-left:auto;padding:3px 10px;font-size:11px;background:#f56c6c;border:none;border-radius:3px;color:#fff;cursor:pointer;">模拟宕机</button>
+                </div>
+                <div class="info-card-body" id="logTriggerArea" style="padding:8px;">
+                </div>
+            </div>
+
             <!-- 操作日志 -->
             <div class="info-card">
                 <div class="info-card-header">执行日志</div>
@@ -668,16 +709,30 @@
     </div>
 
     <script src="/static/api.js"></script>
+    <script src="log_trigger.js"></script>
     <script>
     document.getElementById('navBar').innerHTML = createNavBar();
 
     // ===================== DOM 元素 =====================
-    const runBtn = document.getElementById('run-btn');
-    const sqlInput = document.getElementById('sql-input');
+    const selectBtn = document.getElementById('selectBtn');
+    const updateBtn = document.getElementById('updateBtn');
     const resultArea = document.getElementById('resultArea');
     const sqlTypeBadge = document.getElementById('sqlTypeBadge');
     const speedSlider = document.getElementById('speedSlider');
     const speedLabel = document.getElementById('speedLabel');
+    const logCard = document.getElementById('logCard');
+    const logTriggerArea = document.getElementById('logTriggerArea');
+    const crashBtn = document.getElementById('crashBtn');
+
+    // 固定 SQL 语句
+    const PRESET_SQL = {
+        select: "SELECT name FROM users WHERE id = 1;",
+        update: "UPDATE users SET name='Alice' WHERE id=1;"
+    };
+    let currentSQL = '';
+
+    // 日志触发控制器
+    let logTriggerCtrl = null;
 
     // 所有阶段
     const stageIds = [
@@ -760,6 +815,28 @@
             index = type === 'SELECT' ? '全表扫描' : '--';
         }
 
+        // 提取 SET 子句 (用于日志触发模块的动态展示)
+        let setClause = '--';
+        let beforeValue = '旧值';
+        let afterValue = '新值';
+        const setMatch = sql.match(/SET\s+(.+?)(?:\s+WHERE|$)/i);
+        if (setMatch) {
+            setClause = setMatch[1].trim();
+            // 尝试提取 col=col+1 或 col=值 的模式
+            const colMatch = setClause.match(/(\w+)\s*=\s*(.+)/);
+            if (colMatch) {
+                const col = colMatch[1];
+                const val = colMatch[2].trim();
+                if (/^\d+$/.test(val)) {
+                    beforeValue = `${col}=旧值`;
+                    afterValue = `${col}=${val}`;
+                } else {
+                    beforeValue = `${col}=旧值`;
+                    afterValue = `${col}=${val}`;
+                }
+            }
+        }
+
         // 模拟执行计划
         if (type === 'SELECT') {
             planRows = [
@@ -779,7 +856,7 @@
             ];
         }
 
-        return { type, isWrite, table, where, index, lockType, planRows };
+        return { type, isWrite, table, where, index, lockType, planRows, setClause, beforeValue, afterValue };
     }
 
     // ===================== 渲染信息面板 =====================
@@ -865,6 +942,9 @@
         document.getElementById('execTime').textContent = '--';
         logInitialized = false;
         execLogEl.innerHTML = '<div style="color:#94a3b8;">等待操作...</div>';
+        // 重置日志触发卡片
+        logCard.style.display = 'none';
+        logTriggerCtrl = null;
     }
 
     // ===================== 激活阶段 =====================
@@ -896,12 +976,14 @@
 
     // ===================== 主执行流程 =====================
     async function startFlow() {
-        runBtn.disabled = true;
+        selectBtn.disabled = true;
+        updateBtn.disabled = true;
         resetAll();
 
-        const sql = sqlInput.value.trim();
+        const sql = currentSQL;
         if (!sql) {
-            runBtn.disabled = false;
+            selectBtn.disabled = false;
+            updateBtn.disabled = false;
             return;
         }
 
@@ -949,6 +1031,27 @@
         // 8. 存储引擎
         await activateStage(7, '存储引擎', 'Buffer Pool 查询 → 磁盘读取 → Redo/Undo Log');
 
+        // 写操作：在存储引擎阶段展开日志触发状态变化
+        if (info.isWrite) {
+            logCard.style.display = 'block';
+            logTriggerCtrl = initLogTrigger(logTriggerArea, {
+                tableName: info.table,
+                beforeValue: info.beforeValue,
+                afterValue: info.afterValue,
+                sqlText: sql,
+                compact: true
+            });
+            writeExecLog('<b>日志触发</b> — 开始展示内存/磁盘状态变化');
+
+            // 自动推进日志触发步骤（跳过步骤0，从步骤1开始）
+            const totalSteps = logTriggerCtrl.getTotalSteps();
+            for (let i = 1; i < totalSteps; i++) {
+                await delay(getDelay());
+                logTriggerCtrl.advance();
+                writeExecLog(`<b>日志触发</b> — 推进到阶段${i}`);
+            }
+        }
+
         // 9. Binlog (仅写操作)
         if (info.isWrite) {
             await activateStage(8, 'Binlog', '两阶段提交: Redo Log prepare → Binlog → Redo Log commit');
@@ -975,14 +1078,27 @@
 
         writeExecLog(`<b style="color:#059669;">执行完成</b> — 总耗时 ${elapsed}ms`);
 
-        runBtn.disabled = false;
+        selectBtn.disabled = false;
+        updateBtn.disabled = false;
     }
 
     // ===================== 事件绑定 =====================
-    runBtn.addEventListener('click', startFlow);
+    selectBtn.addEventListener('click', () => {
+        currentSQL = PRESET_SQL.select;
+        startFlow();
+    });
 
-    sqlInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') startFlow();
+    updateBtn.addEventListener('click', () => {
+        currentSQL = PRESET_SQL.update;
+        startFlow();
+    });
+
+    // 宕机模拟按钮
+    crashBtn.addEventListener('click', () => {
+        if (logTriggerCtrl) {
+            logTriggerCtrl.simulateCrash();
+            writeExecLog('<b style="color:#f56c6c;">宕机模拟</b> — 当前阶段发生宕机，查看数据恢复情况');
+        }
     });
     </script>
 </body>

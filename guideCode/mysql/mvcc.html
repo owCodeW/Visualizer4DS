@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>MVCC 可视化：多版本并发控制机制 | 数据库内核演示</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', 'Roboto', 'Noto Sans', system-ui, -apple-system, sans-serif;
+            background: #f1f4f9;
+            margin: 0;
+            padding: 24px 20px;
+            color: #1e293b;
+        }
+        /* 主容器 */
+        .dashboard {
+            max-width: 1600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 2rem;
+            box-shadow: 0 20px 35px -12px rgba(0,0,0,0.15);
+            overflow-x: auto;
+            padding: 1.5rem 1rem 2rem 1rem;
+        }
+        /* 控制栏 + 场景切换 */
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 28px;
+            padding: 0 12px;
+        }
+        .scenario-group {
+            display: flex;
+            gap: 12px;
+            background: #eef2ff;
+            padding: 6px 12px;
+            border-radius: 60px;
+        }
+        .scenario-btn {
+            background: transparent;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 32px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 0.85rem;
+            color: #1e40af;
+        }
+        .scenario-btn.active {
+            background: #1e3a8a;
+            color: white;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        .iso-switch {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #f8fafc;
+            padding: 5px 16px;
+            border-radius: 40px;
+            border: 1px solid #cbd5e1;
+        }
+        .iso-label {
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .toggle-group {
+            display: flex;
+            gap: 8px;
+        }
+        .iso-opt {
+            padding: 5px 16px;
+            border-radius: 30px;
+            background: #e2e8f0;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 500;
+            transition: 0.1s;
+        }
+        .iso-opt.active {
+            background: #0f172a;
+            color: white;
+        }
+        .reset-btn {
+            background: #334155;
+            border: none;
+            padding: 6px 20px;
+            border-radius: 32px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        /* 多轨网格布局 (时间轴 + 事务列 + 版本链) */
+        .mvcc-matrix {
+            display: grid;
+            grid-template-columns: 70px repeat(auto-fit, minmax(210px, 1fr)) 360px;
+            gap: 12px 8px;
+            margin-top: 20px;
+            min-width: 900px;
+        }
+        /* 时间轴样式 */
+        .time-marker {
+            font-weight: 700;
+            background: #eef2ff;
+            border-radius: 20px;
+            padding: 8px 6px;
+            text-align: center;
+            font-size: 0.9rem;
+            color: #1e40af;
+            border-left: 3px solid #3b82f6;
+        }
+        /* 事务列容器 */
+        .transaction-col {
+            background: #ffffff;
+            border-radius: 24px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 12px 8px;
+            min-height: 180px;
+            transition: all 0.1s;
+        }
+        .tx-header {
+            font-weight: 800;
+            font-size: 1rem;
+            background: #f1f5f9;
+            padding: 6px 12px;
+            border-radius: 28px;
+            display: inline-block;
+            margin-bottom: 8px;
+            text-align: center;
+            width: 100%;
+            border: 1px solid #cbd5e1;
+        }
+        .tx-badge {
+            font-family: monospace;
+            background: #1e293b;
+            color: #e2e8f0;
+            border-radius: 20px;
+            padding: 2px 8px;
+            font-size: 0.7rem;
+        }
+        /* 操作块 (事务动作) */
+        .action-block {
+            background: #ffffff;
+            border-radius: 20px;
+            padding: 12px 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            border-left: 6px solid #94a3b8;
+            transition: all 0.2s;
+            cursor: pointer;
+            position: relative;
+        }
+        .action-block.read {
+            border-left-color: #3b82f6;
+            background: #f8fafc;
+        }
+        .action-block.write {
+            border-left-color: #f97316;
+            background: #fff7ed;
+        }
+        .action-block.active-tx {
+            animation: pulseBorder 1.2s infinite;
+            border: 1.5px solid #f97316;
+            box-shadow: 0 0 0 1px rgba(249,115,22,0.3);
+        }
+        .action-block.committed {
+            opacity: 0.75;
+            filter: grayscale(0.05);
+            border-left-color: #22c55e;
+        }
+        @keyframes pulseBorder {
+            0% { box-shadow: 0 0 0 0 rgba(249,115,22,0.4);}
+            70% { box-shadow: 0 0 0 6px rgba(249,115,22,0);}
+            100% { box-shadow: 0 0 0 0 rgba(249,115,22,0);}
+        }
+        .action-icon {
+            font-size: 1.2rem;
+            margin-right: 8px;
+        }
+        .action-detail {
+            font-size: 0.8rem;
+            font-family: monospace;
+        }
+        .read-view-panel {
+            background: #e6f0ff;
+            margin-top: 8px;
+            padding: 8px;
+            border-radius: 16px;
+            font-size: 0.7rem;
+            font-family: monospace;
+            border: 1px dashed #3b82f6;
+        }
+        /* 版本链列 (贯穿整个高度) */
+        .version-chain-area {
+            background: #fefce8;
+            border-radius: 28px;
+            border: 1px solid #fde047;
+            padding: 16px 12px;
+            position: relative;
+            grid-row: span 20;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .version-card {
+            background: white;
+            border-radius: 20px;
+            padding: 12px;
+            box-shadow: 0 6px 12px -8px rgba(0,0,0,0.1);
+            border: 1px solid #facc15;
+            transition: 0.1s;
+            position: relative;
+        }
+        .version-card.highlight-green {
+            background: #d9f99d;
+            border: 2px solid #22c55e;
+        }
+        .version-card.highlight-red {
+            background: #fee2e2;
+            border: 2px solid #ef4444;
+        }
+        .fields {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            font-size: 0.7rem;
+            font-family: monospace;
+            margin-top: 6px;
+        }
+        .field {
+            background: #f1f3f4;
+            padding: 4px 8px;
+            border-radius: 16px;
+        }
+        .trx-id-highlight {
+            background: #b91c1c;
+            color: white;
+            font-weight: bold;
+        }
+        .roll-ptr-arrow {
+            text-align: center;
+            font-size: 1.2rem;
+            margin: -4px 0;
+            color: #b45309;
+        }
+        .rule-hint {
+            font-size: 0.65rem;
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 6px 8px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+        .connect-svg-layer {
+            position: relative;
+            pointer-events: none;
+        }
+        button.small-step {
+            background: none;
+            border: 1px solid #3b82f6;
+            border-radius: 20px;
+            padding: 2px 8px;
+            font-size: 0.6rem;
+            margin-top: 6px;
+            cursor: pointer;
+        }
+        hr {
+            margin: 6px 0;
+        }
+        .info-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin: 0 12px 20px 12px;
+            background: #f1f5f9;
+            padding: 12px 18px;
+            border-radius: 28px;
+            font-size: 0.7rem;
+        }
+        @media (max-width: 780px) {
+            .mvcc-matrix {
+                grid-template-columns: 60px 1fr 1fr 280px;
+            }
+            .action-block { padding: 8px; }
+        }
+        .tx-col-header {
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <div class="toolbar">
+        <div class="scenario-group">
+            <button data-scene="base" class="scenario-btn active">📘 基础场景: 并发修改+快照读</button>
+            <button data-scene="rcrr" class="scenario-btn">⚖️ RC vs RR 不可重复读对比</button>
+            <button data-scene="delete" class="scenario-btn">🗑️ 边界场景: 删除+长事务</button>
+        </div>
+        <div class="iso-switch">
+            <span class="iso-label">隔离级别</span>
+            <div class="toggle-group">
+                <div data-iso="RC" class="iso-opt">RC (读已提交)</div>
+                <div data-iso="RR" class="iso-opt active">RR (可重复读)</div>
+            </div>
+        </div>
+        <button class="reset-btn" id="resetBtn">⟳ 重置场景/清除高亮</button>
+    </div>
+    <div class="info-legend">
+        <span>🔍 <strong>MVCC核心</strong> : 版本链(Undo) + ReadView可见性判断</span>
+        <span>👁️ 读操作(快照读) 点击分步追溯 | 🖌️ 写操作(生成新版本) </span>
+        <span>🟢 绿色=可见版本 🔴 红色=不可见(被隔离) </span>
+        <span>✨ <strong>RR隔离级:</strong> 事务内ReadView复用 | <strong>RC:</strong> 每次SELECT新快照</span>
+    </div>
+    <div class="mvcc-matrix" id="mvccGrid">
+        <!-- 动态生成: 时间轴, 事务列, 版本链容器通过js渲染 -->
+    </div>
+</div>
+
+<script>
+    // ------------------- 场景数据模型 -------------------
+    // 每个场景定义 时间线事件、事务初始状态、版本链初始数据
+    const SCENES = {
+        base: {   // 经典场景: T1 A启动，T2 B快照读，T3 A修改提交，T4 B再次快照读 (RR可见旧版本)
+            name: "基础MVCC",
+            isoSupport: true,
+            timeline: [
+                { time: "T1", actions: { "A": { type: "BEGIN", trxId: 101, active: true }, "B": { type: "BEGIN", trxId: 102, active: true } } },
+                { time: "T2", actions: { "B": { type: "SELECT", value: "快照读(age=30)", trxId: 102, readView: { m_ids: [101,102], min_trx:101, max_trx:103, creator:102 } } } },
+                { time: "T3", actions: { "A": { type: "UPDATE", newVal: "age=35", trxId: 101, commitAfter: true } } },
+                { time: "T4", actions: { "B": { type: "SELECT", value: "再次快照读", trxId: 102, readViewRepeat: true } } }
+            ],
+            initialVersionChain: { data: "age=30", trx_id: 100, roll_ptr: null },  // 初始提交版本
+            extraVersions: []
+        },
+        rcrr: {    // RC vs RR 对比场景
+            name: "隔离对比",
+            isoSupport: true,
+            timeline: [
+                { time: "T1", actions: { "A": { type: "BEGIN", trxId: 201, active: true }, "B": { type: "BEGIN", trxId: 202, active: true } } },
+                { time: "T2", actions: { "B": { type: "SELECT", value: "首次读(age=40)", trxId: 202, readView: { m_ids: [201,202], min_trx:201, max_trx:203, creator:202 } } } },
+                { time: "T3", actions: { "A": { type: "UPDATE", newVal: "age=45", trxId: 201, commitAfter: true } } },
+                { time: "T4", actions: { "B": { type: "SELECT", value: "再次读(演示不可重复读)", trxId: 202, readViewRepeat: true } } }
+            ],
+            initialVersionChain: { data: "age=40", trx_id: 200, roll_ptr: null },
+        },
+        delete: {
+            name: "删除+长事务",
+            timeline: [
+                { time: "T1", actions: { "C": { type: "BEGIN", trxId: 301, active: true }, "D": { type: "BEGIN", trxId: 302, active: true } } },
+                { time: "T2", actions: { "C": { type: "SELECT", value: "快照读(age=50)", trxId: 301, readView: { m_ids: [301,302], min_trx:301, max_trx:303, creator:301 } } } },
+                { time: "T3", actions: { "D": { type: "DELETE", markDelete: true, trxId: 302, commitAfter: true } } },
+                { time: "T4", actions: { "C": { type: "SELECT", value: "再次读(仍可见原版本)", trxId: 301, readViewRepeat: true } } }
+            ],
+            initialVersionChain: { data: "age=50 (活跃)", trx_id: 300, roll_ptr: null },
+        }
+    };
+
+    let currentScene = "base";
+    let currentIso = "RR";   // RR / RC
+    let activeReadViewMap = new Map();  // 记录每个事务每次SELECT产生的ReadView细节用于交互
+    let actionElements = []; // 存储交互块
+
+    // 渲染主函数
+    function renderScene() {
+        const scene = SCENES[currentScene];
+        if (!scene) return;
+        const timeline = scene.timeline;
+        const container = document.getElementById("mvccGrid");
+        container.innerHTML = "";
+        // 构建版本链结构 (动态根据场景+事务更新模拟最新链表)  简化演示基于初始 + update/delete追加
+        let versionChain = [{ data: scene.initialVersionChain.data, trx_id: scene.initialVersionChain.trx_id, roll_ptr: null, isDel: false }];
+        // 额外处理: 根据timeline中更新添加版本链 (模拟真实)
+        // 用于辅助显示
+        let additionalVersions = [];
+        for(let ev of timeline) {
+            for(let [tx, act] of Object.entries(ev.actions)) {
+                if(act.type === "UPDATE" && act.newVal) {
+                    let last = versionChain[0];
+                    let newVer = { data: act.newVal, trx_id: act.trxId, roll_ptr: "← prev", prevData: last.data, isDel: false };
+                    versionChain.unshift(newVer);
+                    additionalVersions.push(newVer);
+                }
+                if(act.type === "DELETE" && act.markDelete) {
+                    let delVer = { data: "【已删除标记】", trx_id: act.trxId, roll_ptr: "← prev", isDel: true, prevData: versionChain[0].data };
+                    versionChain.unshift(delVer);
+                }
+            }
+        }
+
+        // 确定最大行数(时间轴长度)
+        const timeLen = timeline.length;
+        // 收集所有事务列标识 (A,B,C,D)
+        let allTx = new Set();
+        timeline.forEach(t => {
+            Object.keys(t.actions).forEach(tx => allTx.add(tx));
+        });
+        let txList = Array.from(allTx).sort();
+        
+        // 构建grid头部: 时间列 + 每个事务列 + 版本链
+        let headerRow = document.createElement("div");
+        headerRow.style.display = "contents";
+        headerRow.innerHTML = `<div class="time-marker" style="background:transparent; border:none;">⏱️时间</div>`;
+        txList.forEach(tx => {
+            let txHead = document.createElement("div");
+            txHead.className = "tx-col-header";
+            txHead.innerText = `事务 ${tx}`;
+            headerRow.appendChild(txHead);
+        });
+        let verHead = document.createElement("div");
+        verHead.innerText = "🗃️ 版本链 (Undo Log)";
+        verHead.style.fontWeight = "bold";
+        verHead.style.padding = "8px";
+        headerRow.appendChild(verHead);
+        container.appendChild(headerRow);
+        
+        // 对每个时间点构建行
+        for(let idx=0; idx<timeLen; idx++) {
+            const timeSlot = timeline[idx];
+            const timeVal = timeSlot.time;
+            let timeDiv = document.createElement("div");
+            timeDiv.className = "time-marker";
+            timeDiv.innerText = timeVal;
+            container.appendChild(timeDiv);
+            
+            // 每个事务的列
+            for(let tx of txList) {
+                let colDiv = document.createElement("div");
+                colDiv.className = "transaction-col";
+                let action = timeSlot.actions[tx];
+                if(action) {
+                    let block = createActionBlock(tx, action, timeVal, idx);
+                    colDiv.appendChild(block);
+                } else {
+                    let place = document.createElement("div");
+                    place.style.height = "48px";
+                    place.style.opacity = "0.4";
+                    place.innerText = "——";
+                    place.style.textAlign="center";
+                    colDiv.appendChild(place);
+                }
+                container.appendChild(colDiv);
+            }
+            // 版本链列合并行（每行展示相同版本链快照?更直观展示最新版本链全景, 只需要在第一个时间行显示全部版本链）
+            if(idx === 0) {
+                let versionContainer = document.createElement("div");
+                versionContainer.className = "version-chain-area";
+                versionContainer.id = "globalVersionChain";
+                renderVersionChainToContainer(versionContainer, versionChain);
+                container.appendChild(versionContainer);
+            } else {
+                // 占位，但是让版本链区域跨行，后续通过grid-row span处理。为了简单，给版本链区域动态设置grid-row: span timeLen
+                if(idx === 1) {
+                    let verExisting = document.getElementById("globalVersionChain");
+                    if(verExisting) verExisting.style.gridRow = `span ${timeLen}`;
+                }
+                let dummy = document.createElement("div");
+                dummy.style.display = "none";
+                container.appendChild(dummy);
+            }
+        }
+        // 调整版本链grid-row跨度
+        let verChainDiv = document.getElementById("globalVersionChain");
+        if(verChainDiv) verChainDiv.style.gridRow = `span ${timeLen}`;
+        
+        // 交互事件绑定: 所有读块点击逐步演示
+        attachReadViewInteractions();
+        refreshActiveStateFromTimeline(timeline, txList);
+    }
+    
+    function renderVersionChainToContainer(container, chain) {
+        container.innerHTML = "";
+        for(let i=0; i<chain.length; i++) {
+            let ver = chain[i];
+            let card = document.createElement("div");
+            card.className = "version-card";
+            card.setAttribute("data-trx-id", ver.trx_id);
+            card.setAttribute("data-version-index", i);
+            card.innerHTML = `
+                <div><strong>📄 版本 ${i===0 ? "最新" : "历史版本"}</strong> ${ver.isDel ? "🗑️删除" : ""}</div>
+                <div class="fields">
+                    <span class="field">📦 Data: ${ver.data}</span>
+                    <span class="field trx-id-field">🆔 DB_TRX_ID: ${ver.trx_id}</span>
+                    <span class="field">🔗 DB_ROLL_PTR: ${ver.roll_ptr || "null"}</span>
+                </div>
+            `;
+            if(ver.isDel) card.style.opacity = "0.7";
+            container.appendChild(card);
+            if(i < chain.length-1) {
+                let arrow = document.createElement("div");
+                arrow.className = "roll-ptr-arrow";
+                arrow.innerText = "⬇️ ROLL_PTR ↓";
+                container.appendChild(arrow);
+            }
+        }
+    }
+    
+    function createActionBlock(tx, action, timeVal, idx) {
+        let div = document.createElement("div");
+        let isRead = (action.type === "SELECT");
+        let isWrite = (action.type === "UPDATE" || action.type === "DELETE");
+        div.className = `action-block ${isRead ? 'read' : 'write'} ${action.active ? 'active-tx' : ''}`;
+        if(action.commitAfter) div.classList.add("committed");
+        let icon = isRead ? "👁️ 快照读" : (action.type === "UPDATE" ? "✏️ UPDATE" : "❌ DELETE");
+        let valueText = action.newVal ? ` → ${action.newVal}` : (action.value ? ` ${action.value}` : "");
+        div.innerHTML = `
+            <div><span class="action-icon">${icon}</span> <strong>${tx}</strong> (trx_id:${action.trxId})</div>
+            <div class="action-detail">${valueText || (action.markDelete ? "删除行" : "")}</div>
+            <div class="read-view-panel" style="display:${isRead ? 'block' : 'none'}" id="rv-${tx}-${timeVal}">
+                📋 ReadView待生成 <button class="small-step step-readview">🔍 生成快照并追溯</button>
+            </div>
+        `;
+        if(isRead) {
+            let panel = div.querySelector(".read-view-panel");
+            let btn = div.querySelector(".step-readview");
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                simulateReadView(tx, action, div, idx);
+            });
+        }
+        return div;
+    }
+    
+    function simulateReadView(tx, action, blockElem, timeIdx) {
+        let iso = currentIso;
+        let readViewObj = null;
+        let useRepeat = (iso === "RR" && action.readViewRepeat === true) || (action.readView && action.readViewRepeat !== false);
+        if(useRepeat && activeReadViewMap.has(`${tx}_first`)) {
+            readViewObj = activeReadViewMap.get(`${tx}_first`);
+            showReadViewPanel(blockElem, readViewObj, true);
+        } else {
+            let newView = action.readView || { m_ids: [action.trxId, 999], min_trx: action.trxId, max_trx: action.trxId+1, creator: action.trxId };
+            if(!action.readView && iso === "RC") newView = { m_ids: [999], min_trx: 999, max_trx: 1000, creator: action.trxId };
+            readViewObj = newView;
+            if(iso === "RR" && !activeReadViewMap.has(`${tx}_first`)) activeReadViewMap.set(`${tx}_first`, readViewObj);
+            showReadViewPanel(blockElem, readViewObj, false);
+        }
+        // 高亮版本链可见性
+        highlightVersionByReadView(readViewObj);
+    }
+    
+    function showReadViewPanel(block, view, isReused) {
+        let panel = block.querySelector(".read-view-panel");
+        if(!panel) return;
+        let m_ids_str = view.m_ids ? view.m_ids.join(",") : "[]";
+        panel.innerHTML = `
+            <div style="font-weight:bold;">📖 Read View ${isReused ? "(复用RR快照)" : "(新快照)"}</div>
+            <div>m_ids: {${m_ids_str}}  min_trx:${view.min_trx}  max_trx:${view.max_trx} creator:${view.creator}</div>
+            <div class="rule-hint">✅ 版本可见规则: DB_TRX_ID < min_trx 或 不在m_ids内 且 < creator</div>
+            <button class="small-step trace-chain">🔎 追溯版本链(红/绿判定)</button>
+        `;
+        let traceBtn = panel.querySelector(".trace-chain");
+        traceBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            highlightVersionByReadView(view);
+        });
+    }
+    
+    function highlightVersionByReadView(readView) {
+        const versionCards = document.querySelectorAll(".version-card");
+        versionCards.forEach(card => {
+            let trxIdAttr = card.getAttribute("data-trx-id");
+            if(!trxIdAttr) return;
+            let trxIdNum = parseInt(trxIdAttr);
+            let visible = false;
+            if(trxIdNum < readView.min_trx) visible = true;
+            else if(trxIdNum >= readView.max_trx) visible = false;
+            else {
+                if(readView.m_ids && readView.m_ids.includes(trxIdNum)) visible = false;
+                else visible = (trxIdNum === readView.creator) ? true : false;
+            }
+            card.classList.remove("highlight-green","highlight-red");
+            if(visible) card.classList.add("highlight-green");
+            else card.classList.add("highlight-red");
+            // 加悬浮规则提示
+            card.setAttribute("title", visible ? "✅ 可见: 符合MVCC可见性规则" : "❌ 不可见: 事务ID在活跃m_ids中或大于等于max_trx");
+        });
+    }
+    
+    function refreshActiveStateFromTimeline(timeline, txList) {
+        // 根据场景提交后更新active样式
+        setTimeout(()=>{
+            document.querySelectorAll(".action-block").forEach(blk => {
+                if(blk.innerText.includes("commit")) blk.classList.remove("active-tx");
+            });
+        },100);
+    }
+    
+    function attachReadViewInteractions() {
+        // 预置重置高亮函数
+        let resetHighlights = () => {
+            document.querySelectorAll(".version-card").forEach(c => c.classList.remove("highlight-green","highlight-red"));
+            document.querySelectorAll(".read-view-panel").forEach(p => {
+                if(p.innerHTML.indexOf("复用")===-1) p.innerHTML = "📋 ReadView待生成 <button class='small-step step-readview'>🔍 生成快照并追溯</button>";
+            });
+        };
+        document.getElementById("resetBtn").addEventListener("click",()=>{
+            activeReadViewMap.clear();
+            renderScene();
+        });
+    }
+    
+    function switchScene(sceneId) {
+        currentScene = sceneId;
+        activeReadViewMap.clear();
+        renderScene();
+    }
+    
+    // 事件绑定
+    document.querySelectorAll(".scenario-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            document.querySelectorAll(".scenario-btn").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            switchScene(btn.dataset.scene);
+        });
+    });
+    document.querySelectorAll(".iso-opt").forEach(opt => {
+        opt.addEventListener("click", (e) => {
+            document.querySelectorAll(".iso-opt").forEach(o => o.classList.remove("active"));
+            opt.classList.add("active");
+            currentIso = opt.dataset.iso;
+            renderScene(); // 重新渲染展示RC/RR差异
+        });
+    });
+    
+    renderScene();
+</script>
+</body>
+</html>

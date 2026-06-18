@@ -142,6 +142,7 @@ function createNavBar() {
         <span class="nav-sep">|</span>
         <a href="/categories/mysql/pages/bptree.html" class="mysql">B+Tree</a>
         <a href="/categories/mysql/pages/sql_execution.html" class="mysql">SQL Flow</a>
+        <a href="/categories/mysql/pages/mvcc.html" class="mysql">MVCC</a>
     </div>`;
 }
 

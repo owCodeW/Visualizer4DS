@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>MVCC 可视化：多版本并发控制机制 | MySQL InnoDB</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/css/mvcc.css">
+</head>
+<body>
+    <div id="navBar"></div>
+
+    <div class="mvcc-page">
+        <h1 class="mvcc-page-title">MySQL MVCC 可视化</h1>
+        <p class="mvcc-page-desc">InnoDB 多版本并发控制: Undo Log 版本链 + ReadView 可见性判断 — RC/RR 隔离级别对比、不可重复读、幻读、当前读</p>
+
+        <div class="mvcc-dashboard">
+            <div class="mvcc-toolbar">
+                <div class="mvcc-scenario-group">
+                    <button data-scene="base" class="mvcc-scenario-btn active">基础场景: 并发修改+快照读</button>
+                    <button data-scene="rcrr" class="mvcc-scenario-btn">RC vs RR 不可重复读</button>
+                    <button data-scene="phantom" class="mvcc-scenario-btn">幻读 + 当前读</button>
+                    <button data-scene="delete" class="mvcc-scenario-btn">删除+长事务</button>
+                </div>
+                <div class="mvcc-iso-switch">
+                    <span class="mvcc-iso-label">隔离级别</span>
+                    <div class="mvcc-toggle-group">
+                        <div data-iso="RC" class="mvcc-iso-opt">RC (读已提交)</div>
+                        <div data-iso="RR" class="mvcc-iso-opt active">RR (可重复读)</div>
+                    </div>
+                </div>
+                <button class="mvcc-reset-btn" id="mvccResetBtn">重置场景/清除高亮</button>
+            </div>
+            <div class="mvcc-info-legend">
+                <span>MVCC核心: 版本链(Undo) + ReadView可见性判断</span>
+                <span>读操作(快照读) 点击分步追溯 | 写操作(生成新版本)</span>
+                <span>绿色=可见版本 | 红色=不可见(被隔离)</span>
+                <span>RR: 事务内ReadView复用 | RC: 每次SELECT新快照</span>
+                <span>懒加载: BEGIN不创建ReadView, 首次SELECT才生成</span>
+            </div>
+            <div class="mvcc-layout">
+                <div class="mvcc-grid-area">
+                    <div class="mvcc-matrix" id="mvccGrid">
+                        <!-- 动态生成: 时间轴, 事务列 -->
+                    </div>
+                </div>
+                <div class="mvcc-chain-area">
+                    <div class="mvcc-version-chain-area" id="globalVersionChain">
+                        <div class="mvcc-chain-title">版本链 (Undo Log)</div>
+                        <!-- 动态生成: 版本卡 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/api.js"></script>
+    <script src="/static/js/mvcc.js"></script>
+</body>
+</html>

@@ -21,10 +21,12 @@ from categories.registry import CategoryInfo, TypeInfo, register_category, regis
 # ---- 1. 合并所有 API 子路由 ----
 from .api.bptree_api import router as bptree_router
 from .api.sql_execution_api import router as sql_exec_router
+from .api.mvcc_api import router as mvcc_router
 
 router = APIRouter()
 router.include_router(bptree_router)
 router.include_router(sql_exec_router)
+router.include_router(mvcc_router)
 
 # ---- 2. 注册分类元信息 ----
 _mysql = CategoryInfo(
@@ -80,11 +82,13 @@ register_type("mysql", TypeInfo(
 ))
 register_type("mysql", TypeInfo(
     name="Undo Log + MVCC",
-    description="多版本并发控制, 回滚段, 读视图",
-    encodings=["MVCC", "ReadView"],
+    description="多版本并发控制, 回滚段, 读视图, RC/RR隔离级别对比, 幻读与当前读",
+    encodings=["MVCC", "ReadView", "Undo Log"],
+    page_path="/categories/mysql/pages/mvcc.html",
+    api_prefix="/api/mysql/mvcc",
     icon="⏪",
     color="#7c3aed",
-    status="planned",
+    status="active",
 ))
 register_type("mysql", TypeInfo(
     name="Binlog",
